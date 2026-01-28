@@ -1,0 +1,24 @@
+@import "govuk-frontend/dist/govuk/govuk-frontend.min.css";
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+ .patb-govuk-header {
+   background: #1d70b8;
+ }
+
+ .patb-govuk-header .govuk-header__container {
+   border-bottom: 0;
+ }
+
+ .patb-govuk-logo {
+   display: block;
+   height: 48px;
+   width: auto;
+ }
