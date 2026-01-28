@@ -24,11 +24,18 @@ export function AirportSelect({ label, valueIata, onChange }: AirportSelectProps
     }).slice(0, 10)
   }, [query])
 
+  const inputId = `airport-${label.toLowerCase().replace(/\s+/g, '-')}`
+
   return (
-    <div className="grid gap-2">
-      <label className="text-sm font-medium text-slate-700">{label}</label>
-      <div className="relative">
+    <div className="govuk-form-group">
+      <label className="govuk-label" htmlFor={inputId}>
+        {label}
+      </label>
+      <div style={{ position: 'relative' }}>
         <input
+          className="govuk-input"
+          id={inputId}
+          type="text"
           value={open ? query : selected ? formatAirport(selected) : query}
           onChange={(e) => {
             setQuery(e.target.value)
@@ -39,11 +46,24 @@ export function AirportSelect({ label, valueIata, onChange }: AirportSelectProps
             window.setTimeout(() => setOpen(false), 150)
           }}
           placeholder="Type an airport or air base"
-          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none ring-brand-200 focus:ring-4"
+          autoComplete="off"
         />
 
         {open ? (
-          <div className="absolute left-0 right-0 top-12 z-20 max-h-72 overflow-auto rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+          <div
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              top: '100%',
+              zIndex: 20,
+              maxHeight: '18rem',
+              overflow: 'auto',
+              backgroundColor: '#fff',
+              border: '2px solid #0b0c0c',
+              marginTop: '2px',
+            }}
+          >
             {results.length ? (
               results.map((a) => (
                 <button
@@ -55,16 +75,43 @@ export function AirportSelect({ label, valueIata, onChange }: AirportSelectProps
                     setQuery('')
                     setOpen(false)
                   }}
-                  className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50"
+                  style={{
+                    display: 'flex',
+                    width: '100%',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '0.75rem',
+                    padding: '0.5rem 0.75rem',
+                    textAlign: 'left',
+                    fontSize: '1rem',
+                    border: 'none',
+                    backgroundColor: 'transparent',
+                    cursor: 'pointer',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#f3f2f1'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent'
+                  }}
                 >
-                  <span className="text-slate-700">{formatAirport(a)}</span>
-                  <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-xs text-slate-600">
+                  <span>{formatAirport(a)}</span>
+                  <span
+                    style={{
+                      backgroundColor: '#f3f2f1',
+                      padding: '0.25rem 0.5rem',
+                      fontFamily: 'monospace',
+                      fontSize: '0.875rem',
+                    }}
+                  >
                     {a.iata}
                   </span>
                 </button>
               ))
             ) : (
-              <div className="px-3 py-2 text-sm text-slate-500">No matches</div>
+              <div style={{ padding: '0.5rem 0.75rem', color: '#505a5f' }}>
+                No matches
+              </div>
             )}
           </div>
         ) : null}

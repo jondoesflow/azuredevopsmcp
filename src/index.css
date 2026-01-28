@@ -22,3 +22,97 @@ body {
    height: 48px;
    width: auto;
  }
+
+/* Header user info - top right */
+.patb-header-user {
+  position: absolute;
+  top: 10px;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.patb-header-user .govuk-header__link {
+  font-size: 14px;
+}
+
+.patb-user-name {
+  font-weight: normal;
+}
+
+/* Header content positioning */
+.patb-govuk-header .govuk-header__content {
+  position: relative;
+  padding-top: 2.5rem;
+}
+
+/* Dropdown menu styles */
+.patb-dropdown {
+  position: relative;
+}
+
+.patb-dropdown-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.patb-dropdown-arrow {
+  font-size: 0.7em;
+  transition: transform 0.2s;
+}
+
+.patb-dropdown--open .patb-dropdown-arrow {
+  transform: rotate(180deg);
+}
+
+.patb-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 100;
+  background: #1d70b8;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  min-width: 160px;
+  border-top: 2px solid #fff;
+}
+
+.patb-dropdown-menu li {
+  margin: 0;
+}
+
+.patb-dropdown-menu .govuk-header__link {
+  display: block;
+  padding: 10px 15px;
+  white-space: nowrap;
+}
+
+.patb-dropdown-menu .govuk-header__link:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.patb-dropdown-item--active {
+  font-weight: bold;
+  text-decoration: underline;
+}
+
+/* Summary list action buttons styled as links */
+.govuk-summary-list__actions button.govuk-link {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
+}
+
+/* Inset text for edit forms */
+.govuk-inset-text .govuk-form-group:last-of-type {
+  margin-bottom: 15px;
+}

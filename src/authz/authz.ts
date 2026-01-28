@@ -47,3 +47,15 @@ export function canCreateRequest(roles: DataverseRoleKey[]): boolean {
     roles.includes('passenger')
   )
 }
+
+export function isHrPersonnel(roles: DataverseRoleKey[]): boolean {
+  return roles.includes('hr_personel') || roles.includes('system_administrator')
+}
+
+export function isBookingOfficer(roles: DataverseRoleKey[]): boolean {
+  return roles.includes('booking_officer') || roles.includes('system_administrator')
+}
+
+export function isPassengerOnly(roles: DataverseRoleKey[]): boolean {
+  return roles.includes('passenger') && !isHrPersonnel(roles) && !isBookingOfficer(roles)
+}

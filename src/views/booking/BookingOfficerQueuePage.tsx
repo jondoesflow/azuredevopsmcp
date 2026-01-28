@@ -6,6 +6,8 @@ import { env } from '../../config'
 import type { PassengerRequestListItem } from '../../dataverse/types'
 import { AirportSelect } from '../../ui/AirportSelect'
 
+type TabView = 'requests' | 'groups'
+
 function formatDateTime(value: string | undefined): string {
   if (!value) return ''
   const d = new Date(value)
@@ -48,6 +50,9 @@ export function BookingOfficerQueuePage() {
   const [success, setSuccess] = useState<string | null>(null)
   const [rows, setRows] = useState<PassengerRequestListItem[]>([])
   const lastLoadedHomeIdRef = useRef<string | undefined>(undefined)
+
+  const [activeTab, setActiveTab] = useState<TabView>('requests')
+  const [groupedRequests, setGroupedRequests] = useState<PassengerRequestListItem[]>([])
 
   const [selected, setSelected] = useState<PassengerRequestListItem | null>(null)
   const [edit, setEdit] = useState({
@@ -119,10 +124,22 @@ export function BookingOfficerQueuePage() {
       setError(null)
       setSuccess(null)
       try {
-        const res = await client.listAllPassengerRequests(acct)
+        // Use saved views if configured, otherwise fall back to listing all
+        const queuedViewGuid = env.viewGuidQueuedPassengerBookings
+        const groupedViewGuid = env.viewGuidGroupedQueuedPassengerBookings
+
+        const [requestsRes, groupedRes] = await Promise.all([
+          queuedViewGuid
+            ? client.listPassengerRequestsByView(acct, queuedViewGuid)
+            : client.listAllPassengerRequests(acct),
+          groupedViewGuid
+            ? client.listPassengerRequestsByView(acct, groupedViewGuid)
+            : Promise.resolve([]),
+        ])
         if (cancelled) return
         lastLoadedHomeIdRef.current = accountHomeId
-        setRows(res)
+        setRows(requestsRes)
+        setGroupedRequests(groupedRes)
       } catch (e) {
         if (cancelled) return
         lastLoadedHomeIdRef.current = undefined
@@ -140,7 +157,36 @@ export function BookingOfficerQueuePage() {
 
   return (
     <div>
-      <h1 className="govuk-heading-l">Passenger requests queue</h1>
+      <h1 className="govuk-heading-l">Booking queue</h1>
+
+      <nav className="govuk-tabs" data-module="govuk-tabs">
+        <ul className="govuk-tabs__list">
+          <li className={`govuk-tabs__list-item ${activeTab === 'requests' ? 'govuk-tabs__list-item--selected' : ''}`}>
+            <a
+              className="govuk-tabs__tab"
+              href="#requests"
+              onClick={(e) => {
+                e.preventDefault()
+                setActiveTab('requests')
+              }}
+            >
+              Requests ({rows.length})
+            </a>
+          </li>
+          <li className={`govuk-tabs__list-item ${activeTab === 'groups' ? 'govuk-tabs__list-item--selected' : ''}`}>
+            <a
+              className="govuk-tabs__tab"
+              href="#groups"
+              onClick={(e) => {
+                e.preventDefault()
+                setActiveTab('groups')
+              }}
+            >
+              Groups ({groupedRequests.length})
+            </a>
+          </li>
+        </ul>
+      </nav>
 
       {error ? (
         <div className="govuk-error-summary" data-module="govuk-error-summary">
@@ -170,11 +216,44 @@ export function BookingOfficerQueuePage() {
 
       {busy ? <p className="govuk-body">Loading…</p> : null}
 
-      {!busy && !error && rows.length === 0 ? (
+      {activeTab === 'groups' && !busy && !error && groupedRequests.length === 0 ? (
+        <p className="govuk-body">No grouped passenger requests found.</p>
+      ) : null}
+
+      {activeTab === 'groups' && !busy && !error && groupedRequests.length > 0 ? (
+        <table className="govuk-table">
+          <thead className="govuk-table__head">
+            <tr className="govuk-table__row">
+              <th scope="col" className="govuk-table__header">Surname</th>
+              <th scope="col" className="govuk-table__header">Forenames</th>
+              <th scope="col" className="govuk-table__header">From</th>
+              <th scope="col" className="govuk-table__header">To</th>
+              <th scope="col" className="govuk-table__header">Status</th>
+              <th scope="col" className="govuk-table__header">Departing</th>
+              <th scope="col" className="govuk-table__header">Created</th>
+            </tr>
+          </thead>
+          <tbody className="govuk-table__body">
+            {groupedRequests.map((r: PassengerRequestListItem, idx: number) => (
+              <tr className="govuk-table__row" key={r.id ?? String(idx)}>
+                <td className="govuk-table__cell">{r.surname ?? ''}</td>
+                <td className="govuk-table__cell">{r.forenames ?? ''}</td>
+                <td className="govuk-table__cell">{r.departingFromIata ?? ''}</td>
+                <td className="govuk-table__cell">{r.destinationIata ?? ''}</td>
+                <td className="govuk-table__cell">{r.transportRequestStatusLabel ?? ''}</td>
+                <td className="govuk-table__cell">{formatDateTime(r.departingOn)}</td>
+                <td className="govuk-table__cell">{formatDateTime(r.createdOn)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+
+      {activeTab === 'requests' && !busy && !error && rows.length === 0 ? (
         <p className="govuk-body">No requests found.</p>
       ) : null}
 
-      {!busy && !error && rows.length > 0 ? (
+      {activeTab === 'requests' && !busy && !error && rows.length > 0 ? (
         <table className="govuk-table">
           <thead className="govuk-table__head">
             <tr className="govuk-table__row">

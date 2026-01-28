@@ -65,20 +65,36 @@ Optional:
 
 ### 5.1 Dataverse environment variables
 
+**Core configuration:**
 - `VITE_DATAVERSE_URL`
   - Example: `https://<org>.crm11.dynamics.com`
+- `VITE_DATAVERSE_SOLUTION_PREFIX`
+  - The publisher prefix for all custom entities and columns (e.g., `jdr_`).
+  - This prefix is prepended to entity set names and column names via helper functions.
 - `VITE_DATAVERSE_ENTITY_SET`
-  - Entity set name for Web API routes. This is often pluralized; verify using metadata if 404s occur.
+  - Entity set name **without prefix** (e.g., `paxdetailses`).
+  - The full entity set name is constructed as `{prefix}{entitySet}` (e.g., `jdr_paxdetailses`).
+- `VITE_DATAVERSE_ENTITY_SET_GROUP`
+  - Entity set name for passenger groups **without prefix** (e.g., `paxgroups`).
+  - Used for multi-passenger submissions where passengers are linked to a group.
 
-Choice/OptionSet mapping (required when those fields are Choice):
+**Choice/OptionSet mapping** (required when those fields are Choice):
 - `VITE_DOCUMENT_TYPE_MAP_JSON`
   - JSON mapping of label -> numeric value.
+  - Example: `{"Passport":833040000,"Warrant Card":833040001,"ID Card":833040002}`
 - `VITE_TRANSPORT_REQUEST_STATUS_JSON`
   - JSON mapping of label -> numeric value.
+  - Example: `{"Approved":833040000,"Rejected":833040001,"In Progress":833040002,"Cancelled":833040003,"Submitted":833040004}`
 
-Mocking:
+**Mocking:**
 - `VITE_USE_MOCK`
   - When `true`, Dataverse calls are bypassed and data is stored in `localStorage`.
+
+### 5.1.1 Dynamic column/entity prefixing
+
+- Use `getPrefixedEntitySet(entitySet)` from `src/config.ts` to get the full entity set name.
+- Use `getPrefixedColumn(columnName)` from `src/config.ts` to get the full column name.
+- Never hardcode the prefix in column references; always use the helper functions.
 
 ### 5.2 Web API conventions
 
@@ -113,6 +129,52 @@ Mocking:
   - `systemuserroles_association`
 - Do not assume the presence of roles across environments.
   - Role IDs and/or expected role names must be configurable.
+
+### 6.1 Role-based routing
+
+The "Start Now" button routes users based on their role:
+- **Booking Officer** → `/booking-queue` (view all in-progress requests and groups)
+- **HR Personnel** → `/hr-request` (create requests for 1 or multiple passengers)
+- **Passenger** → `/request` (create a single passenger request)
+
+### 6.2 Multi-passenger groups (HR Personnel flow)
+
+When HR Personnel creates requests for multiple passengers (2-10):
+1. A `jdr_paxgroups` record is created first with:
+   - `jdr_name`: Lead passenger name + count (e.g., "John Smith +2")
+   - `jdr_passengercount`: Total number of passengers
+2. Each `jdr_paxdetailses` record is then created with:
+   - `jdr_group@odata.bind`: Lookup reference to the group record
+3. The first passenger in the form is marked as "Lead passenger" and their name is used for the group name.
+
+### 6.3 Security role environment variables
+
+- `VITE_PERSONA_BOOKING_OFFICER_SECURITY_ROLE_ID`
+- `VITE_PERSONA_PASSENGER_SECURITY_ROLE_ID`
+- `VITE_PERSONA_HRPERSONNEL_SECURITY_ROLE_ID`
+- `VITE_SYSTEM_ADMINISTRATOR_SECURITY_ROLE_ID`
+
+### 6.4 Dataverse View GUIDs
+
+Instead of hardcoding column selections, use saved Dataverse views:
+
+- `VITE_DATAVERSE_VIEW_GUID_REJECTED_PASSENGER_BOOKINGS` - Rejected bookings (Booking Officers, HR, Admin)
+- `VITE_DATAVERSE_VIEW_GUID_MY_PASSENGER_BOOKINGS` - Logged-in user's own bookings (My Requests page)
+- `VITE_DATAVERSE_VIEW_GUID_QUEDED_PASSENGER_BOOKINGS` - Solo passengers with Submitted/In Progress status (Booking Queue - Requests tab)
+- `VITE_DATAVERSE_VIEW_GUID_GROUPED_QUEDED_PASSENGER_BOOKINGS` - Grouped passengers with Submitted/In Progress status (Booking Queue - Groups tab)
+
+Query views using the `savedQuery` parameter:
+```
+GET /api/data/v9.2/{entitySet}?savedQuery={view-guid}
+```
+
+### 6.5 Submission reference display
+
+After successful submission:
+1. Fetch the created record to retrieve the auto-generated `jdr_name` field
+2. Display the reference(s) in a GOV.UK confirmation panel
+3. For group bookings, also display the group name (`jdr_groupname`)
+4. Include warning text: "Please make a note of these references for all future correspondence"
 
 ## 7) Build & run rules
 

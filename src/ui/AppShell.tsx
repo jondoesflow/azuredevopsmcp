@@ -1,9 +1,10 @@
+import { useState } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import { useMsal } from '@azure/msal-react'
 import type { AccountInfo } from '@azure/msal-browser'
 import { env } from '../config'
 import { useAuthz } from '../authz/AuthzProvider'
-import { canAccessAdmin, canApproveRequests, canBulkAddPassengers, canViewAllRequests, canViewMyRequests } from '../authz/authz'
+import { isHrPersonnel, isBookingOfficer, isPassengerOnly, canAccessAdmin } from '../authz/authz'
 import govukLogo from '../assets/govuk-logo.png'
 
 export function AppShell() {
@@ -13,6 +14,11 @@ export function AppShell() {
     | AccountInfo
     | undefined
   const authz = useAuthz()
+  const [bookingOfficeOpen, setBookingOfficeOpen] = useState(false)
+
+  const showPassengerNav = isPassengerOnly(authz.roles)
+  const showHrNav = isHrPersonnel(authz.roles)
+  const showBookingOfficeNav = isBookingOfficer(authz.roles)
 
   return (
     <div className="govuk-template__body">
@@ -33,16 +39,45 @@ export function AppShell() {
               Passenger requests
             </a>
 
-            <nav aria-label="Menu" className="govuk-header__navigation">
-              <button
-                type="button"
-                className="govuk-header__menu-button govuk-js-header-toggle"
-                aria-controls="navigation"
-                aria-label="Show or hide menu"
-              >
-                Menu
-              </button>
+            {/* User info - top right */}
+            <div className="patb-header-user">
+              {account && authz.loading && (
+                <span className="govuk-header__link">Checking access…</span>
+              )}
+              {account && authz.error && (
+                <span className="govuk-header__link">Access check failed</span>
+              )}
+              {account && (
+                <>
+                  <span className="govuk-header__link patb-user-name">{account.name ?? account.username}</span>
+                  <button
+                    type="button"
+                    className="govuk-link govuk-header__link"
+                    onClick={() => void instance.logoutRedirect()}
+                  >
+                    Sign out
+                  </button>
+                </>
+              )}
+              {!account && (
+                <button
+                  type="button"
+                  className="govuk-link govuk-header__link"
+                  onClick={() =>
+                    void instance.loginRedirect({
+                      scopes: [`${env.dataverseUrl.replace(/\/$/, '')}/.default`],
+                      redirectStartPage: window.location.href,
+                    })
+                  }
+                >
+                  Sign in
+                </button>
+              )}
+            </div>
+
+            <nav aria-label="Main navigation" className="govuk-header__navigation">
               <ul id="navigation" className="govuk-header__navigation-list">
+                {/* Home - visible to all */}
                 <li
                   className={`govuk-header__navigation-item ${pathname === '/' ? 'govuk-header__navigation-item--active' : ''}`}
                 >
@@ -50,14 +85,31 @@ export function AppShell() {
                     Home
                   </Link>
                 </li>
-                <li
-                  className={`govuk-header__navigation-item ${pathname === '/request' ? 'govuk-header__navigation-item--active' : ''}`}
-                >
-                  <Link className="govuk-header__link" to="/request">
-                    Raise request
-                  </Link>
-                </li>
-                {canViewMyRequests(authz.roles) ? (
+
+                {/* Raise Request - for Passengers only */}
+                {showPassengerNav && (
+                  <li
+                    className={`govuk-header__navigation-item ${pathname === '/request' ? 'govuk-header__navigation-item--active' : ''}`}
+                  >
+                    <Link className="govuk-header__link" to="/request">
+                      Raise request
+                    </Link>
+                  </li>
+                )}
+
+                {/* Raise Request as HR - for HR Personnel, Booking Officers, System Admin */}
+                {showHrNav && (
+                  <li
+                    className={`govuk-header__navigation-item ${pathname === '/hr-request' ? 'govuk-header__navigation-item--active' : ''}`}
+                  >
+                    <Link className="govuk-header__link" to="/hr-request">
+                      Raise request as HR
+                    </Link>
+                  </li>
+                )}
+
+                {/* My Requests - for Passengers */}
+                {showPassengerNav && (
                   <li
                     className={`govuk-header__navigation-item ${pathname === '/my-requests' ? 'govuk-header__navigation-item--active' : ''}`}
                   >
@@ -65,26 +117,10 @@ export function AppShell() {
                       My requests
                     </Link>
                   </li>
-                ) : null}
-                {canApproveRequests(authz.roles) ? (
-                  <li
-                    className={`govuk-header__navigation-item ${pathname === '/booking-queue' ? 'govuk-header__navigation-item--active' : ''}`}
-                  >
-                    <Link className="govuk-header__link" to="/booking-queue">
-                      Queue
-                    </Link>
-                  </li>
-                ) : null}
-                {canBulkAddPassengers(authz.roles) ? (
-                  <li
-                    className={`govuk-header__navigation-item ${pathname === '/bulk-add' ? 'govuk-header__navigation-item--active' : ''}`}
-                  >
-                    <Link className="govuk-header__link" to="/bulk-add">
-                      Add passengers
-                    </Link>
-                  </li>
-                ) : null}
-                {canViewAllRequests(authz.roles) ? (
+                )}
+
+                {/* All Requests - for HR Personnel (requests they've raised) */}
+                {showHrNav && !showBookingOfficeNav && (
                   <li
                     className={`govuk-header__navigation-item ${pathname === '/all-requests' ? 'govuk-header__navigation-item--active' : ''}`}
                   >
@@ -92,8 +128,50 @@ export function AppShell() {
                       All requests
                     </Link>
                   </li>
-                ) : null}
-                {canAccessAdmin(authz.roles) ? (
+                )}
+
+                {/* Booking Office dropdown - for Booking Officers, System Admin */}
+                {showBookingOfficeNav && (
+                  <li
+                    className={`govuk-header__navigation-item patb-dropdown ${bookingOfficeOpen ? 'patb-dropdown--open' : ''}`}
+                  >
+                    <button
+                      type="button"
+                      className="govuk-header__link patb-dropdown-toggle"
+                      onClick={() => setBookingOfficeOpen(!bookingOfficeOpen)}
+                      aria-expanded={bookingOfficeOpen}
+                      aria-haspopup="true"
+                    >
+                      Booking Office
+                      <span className="patb-dropdown-arrow" aria-hidden="true">▼</span>
+                    </button>
+                    {bookingOfficeOpen && (
+                      <ul className="patb-dropdown-menu">
+                        <li>
+                          <Link
+                            className={`govuk-header__link ${pathname === '/booking-queue' ? 'patb-dropdown-item--active' : ''}`}
+                            to="/booking-queue"
+                            onClick={() => setBookingOfficeOpen(false)}
+                          >
+                            Queue
+                          </Link>
+                        </li>
+                        <li>
+                          <Link
+                            className={`govuk-header__link ${pathname === '/all-requests' ? 'patb-dropdown-item--active' : ''}`}
+                            to="/all-requests"
+                            onClick={() => setBookingOfficeOpen(false)}
+                          >
+                            All requests
+                          </Link>
+                        </li>
+                      </ul>
+                    )}
+                  </li>
+                )}
+
+                {/* Admin - for System Admin, Booking Officers, HR Personnel */}
+                {canAccessAdmin(authz.roles) && (
                   <li
                     className={`govuk-header__navigation-item ${pathname === '/admin' ? 'govuk-header__navigation-item--active' : ''}`}
                   >
@@ -101,46 +179,7 @@ export function AppShell() {
                       Admin
                     </Link>
                   </li>
-                ) : null}
-                {account ? (
-                  <li className="govuk-header__navigation-item">
-                    <span className="govuk-header__link">{account.name ?? account.username}</span>
-                  </li>
-                ) : null}
-                {account && authz.loading ? (
-                  <li className="govuk-header__navigation-item">
-                    <span className="govuk-header__link">Checking access…</span>
-                  </li>
-                ) : null}
-                {account && authz.error ? (
-                  <li className="govuk-header__navigation-item">
-                    <span className="govuk-header__link">Access check failed</span>
-                  </li>
-                ) : null}
-                <li className="govuk-header__navigation-item">
-                  {account ? (
-                    <button
-                      type="button"
-                      className="govuk-link govuk-header__link"
-                      onClick={() => void instance.logoutRedirect()}
-                    >
-                      Sign out
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="govuk-link govuk-header__link"
-                      onClick={() =>
-                        void instance.loginRedirect({
-                          scopes: [`${env.dataverseUrl.replace(/\/$/, '')}/.default`],
-                          redirectStartPage: window.location.href,
-                        })
-                      }
-                    >
-                      Sign in
-                    </button>
-                  )}
-                </li>
+                )}
               </ul>
             </nav>
           </div>

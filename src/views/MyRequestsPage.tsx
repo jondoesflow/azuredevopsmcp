@@ -56,7 +56,11 @@ export function MyRequestsPage() {
       setBusy(true)
       setError(null)
       try {
-        const res = await client.listMyPassengerRequests(acct)
+        // Use saved view if configured, otherwise fall back to listMyPassengerRequests
+        const viewGuid = env.viewGuidMyPassengerBookings
+        const res = viewGuid
+          ? await client.listPassengerRequestsByView(acct, viewGuid)
+          : await client.listMyPassengerRequests(acct)
         if (cancelled) return
         lastLoadedHomeIdRef.current = accountHomeId
         setRows(res)

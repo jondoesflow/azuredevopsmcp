@@ -6,9 +6,10 @@ import { AdminQueuePage } from '../views/admin/AdminQueuePage.tsx'
 import { MyRequestsPage } from '../views/MyRequestsPage.tsx'
 import { BookingOfficerQueuePage } from '../views/booking/BookingOfficerQueuePage.tsx'
 import { HrBulkAddPage } from '../views/hr/HrBulkAddPage.tsx'
+import { HrRequestPage } from '../views/hr/HrRequestPage.tsx'
 import { AllRequestsPage } from '../views/admin/AllRequestsPage.tsx'
 import { useAuthz } from '../authz/AuthzProvider'
-import { canAccessAdmin, canApproveRequests, canBulkAddPassengers, canViewAllRequests, canViewMyRequests } from '../authz/authz'
+import { canAccessAdmin, canApproveRequests, canBulkAddPassengers, canViewAllRequests, canViewMyRequests, isHrPersonnel } from '../authz/authz'
 
 function AdminGuard() {
   const authz = useAuthz()
@@ -45,6 +46,13 @@ function AllRequestsGuard() {
   return <AllRequestsPage />
 }
 
+function HrRequestGuard() {
+  const authz = useAuthz()
+  if (authz.loading) return null
+  if (!isHrPersonnel(authz.roles)) return <Navigate to="/" replace />
+  return <HrRequestPage />
+}
+
 export function AppRouter() {
   return (
     <Routes>
@@ -55,6 +63,7 @@ export function AppRouter() {
         <Route path="/my-requests" element={<MyRequestsGuard />} />
         <Route path="/booking-queue" element={<BookingOfficerQueueGuard />} />
         <Route path="/bulk-add" element={<HrBulkAddGuard />} />
+        <Route path="/hr-request" element={<HrRequestGuard />} />
         <Route path="/all-requests" element={<AllRequestsGuard />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

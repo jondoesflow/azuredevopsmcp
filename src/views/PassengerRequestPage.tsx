@@ -56,7 +56,7 @@ export function PassengerRequestPage() {
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState<string | null>(null)
+  const [submittedReference, setSubmittedReference] = useState<string | null>(null)
 
   async function ensureLogin() {
     if (account) return
@@ -69,7 +69,7 @@ export function PassengerRequestPage() {
 
   async function submit() {
     setError(null)
-    setSuccess(null)
+    setSubmittedReference(null)
 
     if (account && !canSubmit) {
       setError(
@@ -95,7 +95,7 @@ export function PassengerRequestPage() {
       if (!acct) throw new Error('No signed-in account available')
 
       const res = await client.createPassengerRequest(acct, form)
-      setSuccess(res.id ? `Submitted (${res.id})` : 'Submitted')
+      setSubmittedReference(res.referenceName ?? null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Submission failed')
     } finally {
@@ -104,89 +104,108 @@ export function PassengerRequestPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-3xl justify-center">
-      <div className="w-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Passenger request</h2>
-        <p className="mt-1 text-sm text-slate-600">
-          Enter passenger details and preferred travel.
+    <div className="govuk-grid-row">
+      <div className="govuk-grid-column-two-thirds">
+        <h1 className="govuk-heading-xl">Passenger request</h1>
+        <p className="govuk-body">
+          Enter passenger details and preferred travel dates.
         </p>
 
-        <div className="mt-6 grid gap-4 sm:grid-cols-2">
-          <div className="grid gap-2">
-            <label className="text-sm font-medium text-slate-700">Surname</label>
-            <input
-              value={form.surname}
-              onChange={(e) => setForm((f) => ({ ...f, surname: e.target.value }))}
-              className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none ring-blue-200 focus:ring-4"
-            />
-          </div>
-
-          <div className="grid gap-2">
-            <label className="text-sm font-medium text-slate-700">Forenames</label>
-            <input
-              value={form.forenames}
-              onChange={(e) => setForm((f) => ({ ...f, forenames: e.target.value }))}
-              className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none ring-blue-200 focus:ring-4"
-            />
-          </div>
-
-          <div className="grid gap-2">
-            <label className="text-sm font-medium text-slate-700">Document type</label>
-            <select
-              value={form.documentTypeLabel}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, documentTypeLabel: e.target.value }))
-              }
-              className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none ring-blue-200 focus:ring-4"
-            >
-              <option>Passport</option>
-              <option>National ID</option>
-              <option>Other</option>
-            </select>
-          </div>
-
-          <div className="grid gap-2">
-            <label className="text-sm font-medium text-slate-700">Document number</label>
-            <input
-              value={form.documentNumber}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, documentNumber: e.target.value }))
-              }
-              className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none ring-blue-200 focus:ring-4"
-            />
-          </div>
-
-          <AirportSelect
-            label="Departing From"
-            valueIata={form.departingFromIata}
-            onChange={(a) => setForm((f) => ({ ...f, departingFromIata: a.iata }))}
+        <div className="govuk-form-group">
+          <label className="govuk-label" htmlFor="surname">
+            Surname
+          </label>
+          <input
+            className="govuk-input"
+            id="surname"
+            type="text"
+            value={form.surname}
+            onChange={(e) => setForm((f) => ({ ...f, surname: e.target.value }))}
           />
+        </div>
 
-          <AirportSelect
-            label="Arriving at"
-            valueIata={form.destinationIata}
-            onChange={(a) => setForm((f) => ({ ...f, destinationIata: a.iata }))}
+        <div className="govuk-form-group">
+          <label className="govuk-label" htmlFor="forenames">
+            Forenames
+          </label>
+          <input
+            className="govuk-input"
+            id="forenames"
+            type="text"
+            value={form.forenames}
+            onChange={(e) => setForm((f) => ({ ...f, forenames: e.target.value }))}
           />
+        </div>
 
-          <div className="grid gap-2">
-            <label className="text-sm font-medium text-slate-700">Departing on</label>
-            <input
-              type="datetime-local"
-              value={form.departingOn}
-              onChange={(e) => setForm((f) => ({ ...f, departingOn: e.target.value }))}
-              className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none ring-blue-200 focus:ring-4"
-            />
-          </div>
+        <div className="govuk-form-group">
+          <label className="govuk-label" htmlFor="document-type">
+            Document type
+          </label>
+          <select
+            className="govuk-select"
+            id="document-type"
+            value={form.documentTypeLabel}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, documentTypeLabel: e.target.value }))
+            }
+          >
+            <option value="Passport">Passport</option>
+            <option value="Warrant Card">Warrant Card</option>
+            <option value="ID Card">ID Card</option>
+          </select>
+        </div>
 
-          <div className="grid gap-2">
-            <label className="text-sm font-medium text-slate-700">Returning on</label>
-            <input
-              type="datetime-local"
-              value={form.returningOn}
-              onChange={(e) => setForm((f) => ({ ...f, returningOn: e.target.value }))}
-              className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none ring-blue-200 focus:ring-4"
-            />
-          </div>
+        <div className="govuk-form-group">
+          <label className="govuk-label" htmlFor="document-number">
+            Document number
+          </label>
+          <input
+            className="govuk-input"
+            id="document-number"
+            type="text"
+            value={form.documentNumber}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, documentNumber: e.target.value }))
+            }
+          />
+        </div>
+
+        <AirportSelect
+          label="Departing from"
+          valueIata={form.departingFromIata}
+          onChange={(a) => setForm((f) => ({ ...f, departingFromIata: a.iata }))}
+        />
+
+        <AirportSelect
+          label="Arriving at"
+          valueIata={form.destinationIata}
+          onChange={(a) => setForm((f) => ({ ...f, destinationIata: a.iata }))}
+        />
+
+        <div className="govuk-form-group">
+          <label className="govuk-label" htmlFor="departing-on">
+            Departing on
+          </label>
+          <input
+            className="govuk-input"
+            id="departing-on"
+            type="datetime-local"
+            value={form.departingOn}
+            onChange={(e) => setForm((f) => ({ ...f, departingOn: e.target.value }))}
+          />
+        </div>
+
+        <div className="govuk-form-group">
+          <label className="govuk-label" htmlFor="returning-on">
+            Returning on
+          </label>
+          <input
+            className="govuk-input"
+            id="returning-on"
+            type="datetime-local"
+            value={form.returningOn}
+            onChange={(e) => setForm((f) => ({ ...f, returningOn: e.target.value }))}
+          />
         </div>
 
         {error ? (
@@ -195,43 +214,62 @@ export function PassengerRequestPage() {
               <h2 className="govuk-error-summary__title">There is a problem</h2>
               <div className="govuk-error-summary__body">
                 <ul className="govuk-list govuk-error-summary__list">
-                  <li>
-                    <a href="#">{error}</a>
-                  </li>
+                  <li>{error}</li>
                 </ul>
               </div>
             </div>
           </div>
         ) : null}
-        {success ? (
-          <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-            {success}
-          </div>
+
+        {submittedReference ? (
+          <>
+            <div className="govuk-panel govuk-panel--confirmation">
+              <h2 className="govuk-panel__title">Request submitted</h2>
+              <div className="govuk-panel__body">
+                Your reference:<br />
+                <strong>{submittedReference}</strong>
+              </div>
+            </div>
+
+            <div className="govuk-warning-text">
+              <span className="govuk-warning-text__icon" aria-hidden="true">!</span>
+              <strong className="govuk-warning-text__text">
+                <span className="govuk-visually-hidden">Warning</span>
+                Please make a note of this reference for all future correspondence.
+              </strong>
+            </div>
+
+            <p className="govuk-body">
+              <a href="/" className="govuk-link">Return to home</a>
+            </p>
+          </>
         ) : null}
 
-        <div className="mt-6 govuk-button-group">
-          {account ? (
-            <button
-              type="button"
-              onClick={() => void submit()}
-              disabled={busy || authz.loading}
-              className="govuk-button"
-              data-module="govuk-button"
-            >
-              {busy ? 'Submitting…' : 'Submit request'}
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => void ensureLogin()}
-              disabled={busy}
-              className="govuk-button"
-              data-module="govuk-button"
-            >
-              Sign in to submit
-            </button>
-          )}
-        </div>
+        {!submittedReference && (
+          <div className="govuk-button-group">
+            {account ? (
+              <button
+                type="button"
+                onClick={() => void submit()}
+                disabled={busy || authz.loading}
+                className="govuk-button"
+                data-module="govuk-button"
+              >
+                {busy ? 'Submitting…' : 'Submit request'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void ensureLogin()}
+                disabled={busy}
+                className="govuk-button"
+                data-module="govuk-button"
+              >
+                Sign in to submit
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
