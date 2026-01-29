@@ -1,4 +1,4 @@
-# PATB Transport Portal
+# flightbooking Transport Portal
 
 A React-based passenger transport booking portal that integrates with Microsoft Dataverse for data storage and Microsoft Entra ID (Azure AD) for authentication. This application enables passengers to submit transport requests, HR personnel to create bookings on behalf of others, and booking officers to manage and approve requests.
 
@@ -20,7 +20,7 @@ A React-based passenger transport booking portal that integrates with Microsoft 
 
 ## Overview
 
-The PATB Transport Portal is a single-page application (SPA) designed for managing passenger transport requests within an organization. It provides role-based access control with four distinct user personas:
+The flightbooking Transport Portal is a single-page application (SPA) designed for managing passenger transport requests within an organization. It provides role-based access control with four distinct user personas:
 
 1. **Passengers** - Can submit their own transport requests and view their booking history
 2. **HR Personnel** - Can create transport requests on behalf of other employees, including multi-passenger group bookings
@@ -167,7 +167,7 @@ The PATB Transport Portal is a single-page application (SPA) designed for managi
 1. **Clone the repository:**
    ```bash
    git clone <repository-url>
-   cd patb-transport-portal
+   cd flightbooking-transport-portal
    ```
 
 2. **Install dependencies:**
@@ -250,7 +250,7 @@ All environment variables are prefixed with `VITE_` to be accessible in the brow
 1. **Create App Registration:**
    - Go to Azure Portal → Microsoft Entra ID → App registrations
    - Click "New registration"
-   - Name: `PATB Transport Portal`
+   - Name: `flightbooking Transport Portal`
    - Supported account types: Single tenant (or as needed)
    - Redirect URI: Leave blank for now
 

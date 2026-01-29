@@ -26,11 +26,11 @@ export function AppShell() {
         Skip to main content
       </a>
 
-      <header className="govuk-header patb-govuk-header" data-module="govuk-header">
+      <header className="govuk-header flightbooking-govuk-header" data-module="govuk-header">
         <div className="govuk-header__container govuk-width-container">
           <div className="govuk-header__logo">
             <a href="/" className="govuk-header__link govuk-header__link--homepage">
-              <img src={govukLogo} alt="GOV.UK" className="patb-govuk-logo" />
+              <img src={govukLogo} alt="GOV.UK" className="flightbooking-govuk-logo" />
             </a>
           </div>
 
@@ -40,7 +40,7 @@ export function AppShell() {
             </a>
 
             {/* User info - top right */}
-            <div className="patb-header-user">
+            <div className="flightbooking-header-user">
               {account && authz.loading && (
                 <span className="govuk-header__link">Checking access…</span>
               )}
@@ -49,7 +49,7 @@ export function AppShell() {
               )}
               {account && (
                 <>
-                  <span className="govuk-header__link patb-user-name">{account.name ?? account.username}</span>
+                  <span className="govuk-header__link flightbooking-user-name">{account.name ?? account.username}</span>
                   <button
                     type="button"
                     className="govuk-link govuk-header__link"
@@ -133,23 +133,23 @@ export function AppShell() {
                 {/* Booking Office dropdown - for Booking Officers, System Admin */}
                 {showBookingOfficeNav && (
                   <li
-                    className={`govuk-header__navigation-item patb-dropdown ${bookingOfficeOpen ? 'patb-dropdown--open' : ''}`}
+                    className={`govuk-header__navigation-item flightbooking-dropdown ${bookingOfficeOpen ? 'flightbooking-dropdown--open' : ''}`}
                   >
                     <button
                       type="button"
-                      className="govuk-header__link patb-dropdown-toggle"
+                      className="govuk-header__link flightbooking-dropdown-toggle"
                       onClick={() => setBookingOfficeOpen(!bookingOfficeOpen)}
                       aria-expanded={bookingOfficeOpen}
                       aria-haspopup="true"
                     >
                       Booking Office
-                      <span className="patb-dropdown-arrow" aria-hidden="true">▼</span>
+                      <span className="flightbooking-dropdown-arrow" aria-hidden="true">▼</span>
                     </button>
                     {bookingOfficeOpen && (
-                      <ul className="patb-dropdown-menu">
+                      <ul className="flightbooking-dropdown-menu">
                         <li>
                           <Link
-                            className={`govuk-header__link ${pathname === '/booking-queue' ? 'patb-dropdown-item--active' : ''}`}
+                            className={`govuk-header__link ${pathname === '/booking-queue' ? 'flightbooking-dropdown-item--active' : ''}`}
                             to="/booking-queue"
                             onClick={() => setBookingOfficeOpen(false)}
                           >
@@ -158,7 +158,7 @@ export function AppShell() {
                         </li>
                         <li>
                           <Link
-                            className={`govuk-header__link ${pathname === '/all-requests' ? 'patb-dropdown-item--active' : ''}`}
+                            className={`govuk-header__link ${pathname === '/all-requests' ? 'flightbooking-dropdown-item--active' : ''}`}
                             to="/all-requests"
                             onClick={() => setBookingOfficeOpen(false)}
                           >

@@ -9,22 +9,22 @@ body {
   margin: 0;
 }
 
- .patb-govuk-header {
+ .flightbooking-govuk-header {
    background: #1d70b8;
  }
 
- .patb-govuk-header .govuk-header__container {
+ .flightbooking-govuk-header .govuk-header__container {
    border-bottom: 0;
  }
 
- .patb-govuk-logo {
+ .flightbooking-govuk-logo {
    display: block;
    height: 48px;
    width: auto;
  }
 
 /* Header user info - top right */
-.patb-header-user {
+.flightbooking-header-user {
   position: absolute;
   top: 10px;
   right: 0;
@@ -33,26 +33,26 @@ body {
   gap: 1rem;
 }
 
-.patb-header-user .govuk-header__link {
+.flightbooking-header-user .govuk-header__link {
   font-size: 14px;
 }
 
-.patb-user-name {
+.flightbooking-user-name {
   font-weight: normal;
 }
 
 /* Header content positioning */
-.patb-govuk-header .govuk-header__content {
+.flightbooking-govuk-header .govuk-header__content {
   position: relative;
   padding-top: 2.5rem;
 }
 
 /* Dropdown menu styles */
-.patb-dropdown {
+.flightbooking-dropdown {
   position: relative;
 }
 
-.patb-dropdown-toggle {
+.flightbooking-dropdown-toggle {
   background: none;
   border: none;
   cursor: pointer;
@@ -61,16 +61,16 @@ body {
   gap: 0.25rem;
 }
 
-.patb-dropdown-arrow {
+.flightbooking-dropdown-arrow {
   font-size: 0.7em;
   transition: transform 0.2s;
 }
 
-.patb-dropdown--open .patb-dropdown-arrow {
+.flightbooking-dropdown--open .flightbooking-dropdown-arrow {
   transform: rotate(180deg);
 }
 
-.patb-dropdown-menu {
+.flightbooking-dropdown-menu {
   position: absolute;
   top: 100%;
   left: 0;
@@ -83,21 +83,21 @@ body {
   border-top: 2px solid #fff;
 }
 
-.patb-dropdown-menu li {
+.flightbooking-dropdown-menu li {
   margin: 0;
 }
 
-.patb-dropdown-menu .govuk-header__link {
+.flightbooking-dropdown-menu .govuk-header__link {
   display: block;
   padding: 10px 15px;
   white-space: nowrap;
 }
 
-.patb-dropdown-menu .govuk-header__link:hover {
+.flightbooking-dropdown-menu .govuk-header__link:hover {
   background: rgba(255, 255, 255, 0.1);
 }
 
-.patb-dropdown-item--active {
+.flightbooking-dropdown-item--active {
   font-weight: bold;
   text-decoration: underline;
 }
