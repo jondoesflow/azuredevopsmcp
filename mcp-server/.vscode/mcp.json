@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "mcp-azure-devops": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["dist/index.js"],
+      "env": {
+        "AZURE_DEVOPS_ORG": "cgSPARC",
+        "AZURE_DEVOPS_URL": "https://dev.azure.com/cgSPARC",
+        "AZURE_DEVOPS_PAT": "${env:AZURE_DEVOPS_PAT}"
+      }
+    }
+  }
+}
