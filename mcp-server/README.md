@@ -4,6 +4,7 @@ An MCP (Model Context Protocol) server that integrates with Azure DevOps, enabli
 
 ## Features
 
+- **HTTP/SSE Transport**: Ready for Copilot Studio integration over HTTP
 - **Epics**: List and create Epic work items for strategic planning
 - **Features**: Organize work into Features under Epics
 - **User Stories**: Manage User Stories with detailed acceptance criteria
@@ -13,11 +14,49 @@ An MCP (Model Context Protocol) server that integrates with Azure DevOps, enabli
 - **Real Azure DevOps Integration**: Actual API calls to Azure DevOps REST API
 - **Error Handling & Logging**: Comprehensive logging and error handling
 
+## Quick Start - Deploy to Azure
+
+### Prerequisites
+
+1. **Azure CLI** - [Install](https://aka.ms/installazurecliwindows)
+2. **Docker Desktop** - [Install](https://www.docker.com/products/docker-desktop)
+3. **Azure Subscription** - With Contributor access
+4. **Azure DevOps PAT** - With Work Items (Read & Write) scope
+
+### One-Command Deployment
+
+```powershell
+cd mcp-server
+.\setup-deploy.ps1
+```
+
+This interactive script will:
+- Verify prerequisites (Azure CLI, Docker)
+- Log you into Azure
+- Collect deployment parameters
+- Deploy to Azure Container Instances
+
+**Estimated time: 5-10 minutes**
+
+### Manual Deployment
+
+```powershell
+.\deploy.ps1 `
+    -SubscriptionId "your-subscription-id" `
+    -RegistryName "mcpregistry12345" `
+    -Location "eastus" `
+    -AzureDevOpsOrg "your-ado-org" `
+    -AzureDevOpsPat "your-pat-token" `
+    -AzureDevOpsUrl "https://dev.azure.com/your-ado-org"
+```
+
+---
+
 ## Architecture
 
 ```
 src/
-├── index.ts                 # Main server entry point
+├── index.ts                 # Main server entry point (HTTP + stdio transport)
 ├── config.ts               # Configuration management
 ├── logger.ts               # Logging utilities
 ├── azureDevOpsClient.ts   # Azure DevOps API client
@@ -25,95 +64,113 @@ src/
     └── workItems.ts        # Work item tools & handlers
 ```
 
-- **AzureDevOpsClient**: Encapsulates all Azure DevOps REST API calls
-- **Tool Handlers**: Modular tool definitions and request handlers
-- **Config Manager**: Environment variable validation and loading
-- **Logger**: Structured logging with levels (DEBUG, INFO, WARN, ERROR)
+### Server Endpoints (HTTP Mode)
 
-## Prerequisites
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check (returns server status) |
+| `/sse` | GET | SSE connection for MCP clients |
+| `/messages` | POST | Message endpoint for MCP requests |
 
-1. Azure DevOps Organization: https://dev.azure.com/cgSPARC/
-2. Personal Access Token (PAT) with appropriate scopes
-3. Node.js 18+
-4. npm
-
-## Generate a Personal Access Token
-
-1. Go to https://dev.azure.com/cgSPARC/_usersSettings/tokens
-2. Click "New Token"
-3. Select scopes:
-   - Work Items (Read & Write)
-   - Code (Read)
-   - Build (Read & Execute)
-   - Release (Read)
-4. Copy the token and save it securely
-
-## Installation
-
-```bash
-npm install
-npm run build
-```
+---
 
 ## Configuration
 
-Create a `.env` file in the project root:
+### Environment Variables
 
-```env
-AZURE_DEVOPS_ORG=cgSPARC
-AZURE_DEVOPS_PAT=<your-personal-access-token>
-AZURE_DEVOPS_URL=https://dev.azure.com/cgSPARC
-```
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `AZURE_DEVOPS_ORG` | Yes | - | Azure DevOps organization name |
+| `AZURE_DEVOPS_PAT` | Yes | - | Personal Access Token |
+| `AZURE_DEVOPS_URL` | Yes | - | Full Azure DevOps URL |
+| `PORT` | No | `8080` | HTTP server port |
+| `TRANSPORT_MODE` | No | `http` | `http` for Copilot Studio, `stdio` for CLI |
 
-**Important**: Keep your PAT secure. Never commit `.env` to version control.
+### Local Development
 
-```bash
-# Development mode with auto-rebuild
-npm run dev
-
-# Debug mode
-npm run debug
-```
-
-## Deployment to Azure
-
-### Option 1: Azure Container Instances (ACI)
-
-1. Create a container image:
+1. Copy `.env.example` to `.env`:
    ```bash
-   docker build -t mcp-azure-devops:latest .
+   cp .env.example .env
    ```
 
-2. Push to Azure Container Registry:
+2. Edit `.env` with your Azure DevOps credentials
+
+3. Install and build:
    ```bash
-   az acr build --registry <your-registry> --image mcp-azure-devops:latest .
+   npm install
+   npm run build
    ```
 
-3. Deploy to ACI:
+4. Run locally:
    ```bash
-   az container create --resource-group <rg> --name mcp-azure-devops --image <registry>.azurecr.io/mcp-azure-devops:latest \
-     --environment-variables AZURE_DEVOPS_ORG=cgSPARC AZURE_DEVOPS_PAT=<pat> AZURE_DEVOPS_URL=https://dev.azure.com/cgSPARC
+   npm start
    ```
 
-### Option 2: Azure Functions
+5. Test the health endpoint:
+   ```bash
+   curl http://localhost:8080/health
+   ```
 
-Deploy as an HTTP-based MCP server using Azure Functions with the MCP protocol adapter.
+---
 
-### Option 3: App Service
+## Generate a Personal Access Token
 
-Deploy to Azure App Service with proper environment variable configuration.
+1. Go to `https://dev.azure.com/<your-org>/_usersSettings/tokens`
+2. Click **New Token**
+3. Configure:
+   - **Name**: "MCP Server"
+   - **Scopes**: Work Items (Read & Write)
+   - **Expiration**: Set appropriate duration
+4. Copy the token immediately and save securely
+
+---
 
 ## Connecting to Copilot Studio
 
-Once deployed to Azure:
+After deployment completes, you'll receive a public IP address.
 
-1. Get the MCP server endpoint (e.g., from Azure Container Instances or App Service)
-2. In Copilot Studio, add the MCP server:
-   - Server Type: HTTP
-   - URL: `<your-server-url>`
-   - Authentication: Provide PAT if required
+1. **Get the server URL**: `http://<container-ip>:8080`
 
-3. The MCP tools will be available to your agent for querying Azure DevOps
+2. **In Copilot Studio**, configure the MCP connector:
+   - **Server URL**: `http://<container-ip>:8080/sse`
+   - **Transport**: SSE (Server-Sent Events)
+
+3. The following tools will be available to your agent:
+   - `list_epics`, `create_epic`
+   - `list_features`, `create_feature`
+   - `list_user_stories`, `create_user_story`, `get_user_story`
+   - `list_tasks`, `create_task`
+   - `add_acceptance_criteria`
+   - `update_work_item`
+
+---
+
+## Managing the Deployment
+
+### View Logs
+```bash
+az container logs -g mcp-server-rg -n mcp-azure-devops --tail 50
+```
+
+### Restart Container
+```bash
+az container restart -g mcp-server-rg -n mcp-azure-devops
+```
+
+### Delete Everything
+```bash
+az group delete -g mcp-server-rg --yes
+```
+
+---
+
+## Estimated Costs
+
+| Resource | Monthly Cost |
+|----------|--------------|
+| Azure Container Instances | ~$1/month |
+| Azure Container Registry (Basic) | ~$5/month |
+| **Total** | **~$6/month** |
 
 ## Available MCP Tools
 

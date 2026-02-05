@@ -215,6 +215,8 @@ az container create `
     --image "$registryUrl/$ContainerName`:latest" `
     --cpu 1 `
     --memory 1 `
+    --ports 8080 `
+    --ip-address Public `
     --registry-login-server $registryUrl `
     --registry-username $registryLogin `
     --registry-password $registryPassword `
@@ -222,6 +224,8 @@ az container create `
         AZURE_DEVOPS_ORG=$AzureDevOpsOrg `
         AZURE_DEVOPS_PAT=$AzureDevOpsPat `
         AZURE_DEVOPS_URL=$AzureDevOpsUrl `
+        PORT=8080 `
+        TRANSPORT_MODE=http `
     --subscription $SubscriptionId | Out-Null
 
 Write-Success "Container instance created"
