@@ -1,6 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createServer, IncomingMessage, ServerResponse } from "http";
 import { loadConfig } from "./config.js";
 import { logger } from "./logger.js";
@@ -9,10 +12,46 @@ import { workItemTools, handleWorkItemTool } from "./tools/workItems.js";
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
 const TRANSPORT_MODE = process.env.TRANSPORT_MODE || "http"; // "http" or "stdio"
+const API_KEY = process.env.MCP_API_KEY || "";
 
 // Initialize config and Azure DevOps client
 const config = loadConfig();
 const azureDevOpsClient = new AzureDevOpsClient(config);
+
+// API Key authentication middleware
+function authenticateRequest(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!API_KEY) {
+    // No API key configured - skip auth (development mode)
+    return true;
+  }
+
+  const authHeader = req.headers["authorization"];
+  const queryKey = new URL(req.url || "/", `http://${req.headers.host}`).searchParams.get("api_key");
+
+  // Check Authorization: Bearer <key> header
+  if (authHeader) {
+    const token = authHeader.replace(/^Bearer\s+/i, "");
+    if (token === API_KEY) {
+      return true;
+    }
+  }
+
+  // Check x-api-key header
+  const xApiKey = req.headers["x-api-key"];
+  if (xApiKey === API_KEY) {
+    return true;
+  }
+
+  // Check query parameter
+  if (queryKey === API_KEY) {
+    return true;
+  }
+
+  logger.warn("Unauthorized request", { ip: req.socket.remoteAddress });
+  res.writeHead(401, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: "Unauthorized - invalid or missing API key" }));
+  return false;
+}
 
 function createMcpServer(): Server {
   const server = new Server(
@@ -74,17 +113,35 @@ function createMcpServer(): Server {
   return server;
 }
 
-// HTTP/SSE Transport for Copilot Studio
+// Streamable HTTP Transport for Copilot Studio
 async function startHttpServer() {
-  const transports = new Map<string, SSEServerTransport>();
+  // Store active transports by session ID
+  const transports: Record<string, StreamableHTTPServerTransport> = {};
+
+  // Helper to read request body as JSON
+  function readBody(req: IncomingMessage): Promise<any> {
+    return new Promise((resolve, reject) => {
+      let data = "";
+      req.on("data", (chunk) => (data += chunk));
+      req.on("end", () => {
+        try {
+          resolve(data ? JSON.parse(data) : undefined);
+        } catch (e) {
+          reject(e);
+        }
+      });
+      req.on("error", reject);
+    });
+  }
 
   const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
 
     // CORS headers for Copilot Studio
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, x-api-key, mcp-session-id");
+    res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -92,61 +149,125 @@ async function startHttpServer() {
       return;
     }
 
-    // Health check endpoint
+    // Health check endpoint (no auth required)
     if (url.pathname === "/health" || url.pathname === "/") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         status: "healthy",
         server: "mcp-azure-devops-server",
         version: "1.0.0",
-        transport: "sse",
+        transport: "streamable-http",
+        authEnabled: !!API_KEY,
         tools: workItemTools.length,
       }));
       return;
     }
 
-    // SSE endpoint for MCP connections
-    if (url.pathname === "/sse" && req.method === "GET") {
-      logger.info("New SSE connection request");
+    // --- Streamable HTTP /mcp endpoint ---
+    if (url.pathname === "/mcp") {
+      // Authenticate all /mcp requests
+      if (!authenticateRequest(req, res)) return;
 
+      // POST /mcp - Initialize or send messages
+      if (req.method === "POST") {
+        const body = await readBody(req);
+        (req as any).body = body;
+
+        const sessionId = req.headers["mcp-session-id"] as string | undefined;
+
+        if (sessionId && transports[sessionId]) {
+          // Existing session - forward to transport
+          const transport = transports[sessionId];
+          await transport.handleRequest(req, res, body);
+          return;
+        }
+
+        if (!sessionId && isInitializeRequest(body)) {
+          // New session - create transport and server
+          logger.info("New Streamable HTTP session initializing");
+
+          const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => randomUUID(),
+            onsessioninitialized: (sid) => {
+              logger.info("Session initialized", { sessionId: sid });
+              transports[sid] = transport;
+            },
+          });
+
+          transport.onclose = () => {
+            const sid = transport.sessionId;
+            if (sid && transports[sid]) {
+              logger.info("Transport closed, cleaning up", { sessionId: sid });
+              delete transports[sid];
+            }
+          };
+
+          const server = createMcpServer();
+          await server.connect(transport);
+          await transport.handleRequest(req, res, body);
+          return;
+        }
+
+        // Invalid request
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Bad Request: No valid session ID or not an initialization request" },
+          id: null,
+        }));
+        return;
+      }
+
+      // GET /mcp - SSE stream for existing session
+      if (req.method === "GET") {
+        const sessionId = req.headers["mcp-session-id"] as string | undefined;
+        if (!sessionId || !transports[sessionId]) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid or missing session ID" }));
+          return;
+        }
+        const transport = transports[sessionId];
+        await transport.handleRequest(req, res);
+        return;
+      }
+
+      // DELETE /mcp - Terminate session
+      if (req.method === "DELETE") {
+        const sessionId = req.headers["mcp-session-id"] as string | undefined;
+        if (!sessionId || !transports[sessionId]) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid or missing session ID" }));
+          return;
+        }
+        const transport = transports[sessionId];
+        await transport.handleRequest(req, res);
+        return;
+      }
+    }
+
+    // --- Legacy SSE /sse endpoint (backward compatibility) ---
+    if (url.pathname === "/sse" && req.method === "GET") {
+      if (!authenticateRequest(req, res)) return;
+
+      logger.info("New legacy SSE connection request");
       const server = createMcpServer();
       const transport = new SSEServerTransport("/messages", res);
 
-      const sessionId = crypto.randomUUID();
-      transports.set(sessionId, transport);
-
       res.on("close", () => {
-        logger.info("SSE connection closed", { sessionId });
-        transports.delete(sessionId);
+        logger.info("Legacy SSE connection closed");
       });
 
       await server.connect(transport);
-      logger.info("SSE transport connected", { sessionId });
       return;
     }
 
-    // Messages endpoint for client-to-server communication
+    // --- Legacy /messages endpoint (backward compatibility) ---
     if (url.pathname === "/messages" && req.method === "POST") {
-      let body = "";
-      req.on("data", (chunk) => (body += chunk));
-      req.on("end", async () => {
-        try {
-          // Find the transport for this session (from query param or header)
-          const sessionId = url.searchParams.get("sessionId");
-          const transport = sessionId ? transports.get(sessionId) : transports.values().next().value;
+      if (!authenticateRequest(req, res)) return;
 
-          if (transport) {
-            await transport.handlePostMessage(req, res, body);
-          } else {
-            res.writeHead(404, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "No active session" }));
-          }
-        } catch (error) {
-          logger.error("Error handling message", error);
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Internal server error" }));
-        }
-      });
+      // For legacy SSE, handled by SSEServerTransport internally
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Use /mcp endpoint for Streamable HTTP transport" }));
       return;
     }
 
@@ -158,9 +279,10 @@ async function startHttpServer() {
   httpServer.listen(PORT, "0.0.0.0", () => {
     logger.info(`MCP Azure DevOps Server listening on http://0.0.0.0:${PORT}`);
     logger.info("Endpoints:");
-    logger.info(`  Health: http://0.0.0.0:${PORT}/health`);
-    logger.info(`  SSE: http://0.0.0.0:${PORT}/sse`);
-    logger.info(`  Messages: http://0.0.0.0:${PORT}/messages`);
+    logger.info(`  Health:     http://0.0.0.0:${PORT}/health`);
+    logger.info(`  MCP:        http://0.0.0.0:${PORT}/mcp (Streamable HTTP)`);
+    logger.info(`  SSE:        http://0.0.0.0:${PORT}/sse (Legacy SSE)`);
+    logger.info(`  Auth:       ${API_KEY ? "API key required" : "DISABLED (set MCP_API_KEY to enable)"}`);
   });
 }
 
@@ -194,15 +316,14 @@ async function main() {
 }
 
 // Handle graceful shutdown
-process.on("SIGINT", () => {
+process.on("SIGINT", async () => {
   logger.info("Server shutting down");
   process.exit(0);
 });
 
-process.on("SIGTERM", () => {
+process.on("SIGTERM", async () => {
   logger.info("Server terminating");
   process.exit(0);
 });
 
 main();
-

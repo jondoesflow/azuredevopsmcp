@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
     Deploys the MCP Azure DevOps Server to Azure Container Instances
@@ -153,6 +153,7 @@ az acr create `
     --resource-group $ResourceGroup `
     --name $RegistryName `
     --sku Basic `
+    --admin-enabled true `
     --subscription $SubscriptionId | Out-Null
 Write-Success "Container registry created"
 
@@ -233,10 +234,11 @@ Write-Success "Container instance created"
 # Display deployment information
 Write-Header "Deployment Summary"
 
+$queryStr = '{Name:name, State:instanceView.state, IP:ipAddress.ip, Ports:ipAddress.ports[0].port}'
 $containerInfo = az container show `
     --resource-group $ResourceGroup `
     --name $ContainerName `
-    --query "{Name:name, State:instanceView.state, IP:ipAddress.ip, Ports:ipAddress.ports[0].port}" `
+    --query $queryStr `
     --subscription $SubscriptionId | ConvertFrom-Json
 
 Write-Host "Container Information:" -ForegroundColor Cyan
@@ -260,4 +262,7 @@ Write-Host "  Delete: az group delete -g $ResourceGroup --yes" -ForegroundColor 
 Write-Host "  Restart: az container restart -g $ResourceGroup -n $ContainerName" -ForegroundColor Gray
 
 Write-Success "Deployment completed successfully!"
-Write-Host "`nThe MCP server is now running in Azure Container Instances.`nYou can configure Copilot Studio to connect to: $($containerInfo.IP):8080" -ForegroundColor Green
+$serverIp = $containerInfo.IP
+Write-Host "`nThe MCP server is now running in Azure Container Instances." -ForegroundColor Green
+$connectUrl = "$serverIp" + ":8080"
+Write-Host "You can configure Copilot Studio to connect to: $connectUrl" -ForegroundColor Green
