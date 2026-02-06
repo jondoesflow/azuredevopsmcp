@@ -104,7 +104,7 @@ export class AzureDevOpsClient {
 
       // Add acceptance criteria for user stories
       if (input.witType === "User Story" && input.acceptanceCriteria && input.acceptanceCriteria.length > 0) {
-        const criteriaText = input.acceptanceCriteria.map((c) => `• ${c}`).join("\n");
+        const criteriaText = input.acceptanceCriteria.map((c) => `- ${c}`).join("\n");
         patchDocument.push({
           op: "add",
           path: "/fields/Microsoft.VSTS.Common.AcceptanceCriteria",
@@ -251,7 +251,7 @@ export class AzureDevOpsClient {
     logger.info("Adding acceptance criteria", { project, userStoryId, count: criteria.length });
     
     try {
-      const criteriaText = criteria.map((c) => `• ${c}`).join("\n");
+      const criteriaText = criteria.map((c) => `- ${c}`).join("\n");
       return this.updateWorkItem({
         project,
         workItemId: userStoryId,

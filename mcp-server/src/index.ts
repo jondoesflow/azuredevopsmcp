@@ -1,16 +1,15 @@
 import { randomUUID } from "node:crypto";
+import express, { Request, Response, NextFunction } from "express";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { createServer, IncomingMessage, ServerResponse } from "http";
+import { isInitializeRequest, ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { loadConfig } from "./config.js";
 import { logger } from "./logger.js";
 import { AzureDevOpsClient } from "./azureDevOpsClient.js";
 import { workItemTools, handleWorkItemTool } from "./tools/workItems.js";
 
-const PORT = parseInt(process.env.PORT || "8080", 10);
+const PORT = parseInt(process.env.PORT || "80", 10);
 const TRANSPORT_MODE = process.env.TRANSPORT_MODE || "http"; // "http" or "stdio"
 const API_KEY = process.env.MCP_API_KEY || "";
 
@@ -19,38 +18,27 @@ const config = loadConfig();
 const azureDevOpsClient = new AzureDevOpsClient(config);
 
 // API Key authentication middleware
-function authenticateRequest(req: IncomingMessage, res: ServerResponse): boolean {
+function apiKeyAuth(req: Request, res: Response, next: NextFunction): void {
   if (!API_KEY) {
-    // No API key configured - skip auth (development mode)
-    return true;
+    next();
+    return;
   }
 
   const authHeader = req.headers["authorization"];
-  const queryKey = new URL(req.url || "/", `http://${req.headers.host}`).searchParams.get("api_key");
+  const xApiKey = req.headers["x-api-key"] as string | undefined;
+  const apiKeyHeader = req.headers["apikey"] as string | undefined;
+  const queryKey = req.query["api_key"] as string | undefined;
 
-  // Check Authorization: Bearer <key> header
   if (authHeader) {
     const token = authHeader.replace(/^Bearer\s+/i, "");
-    if (token === API_KEY) {
-      return true;
-    }
+    if (token === API_KEY) { next(); return; }
   }
+  if (xApiKey === API_KEY) { next(); return; }
+  if (apiKeyHeader === API_KEY) { next(); return; }
+  if (queryKey === API_KEY) { next(); return; }
 
-  // Check x-api-key header
-  const xApiKey = req.headers["x-api-key"];
-  if (xApiKey === API_KEY) {
-    return true;
-  }
-
-  // Check query parameter
-  if (queryKey === API_KEY) {
-    return true;
-  }
-
-  logger.warn("Unauthorized request", { ip: req.socket.remoteAddress });
-  res.writeHead(401, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ error: "Unauthorized - invalid or missing API key" }));
-  return false;
+  logger.warn("Unauthorized request", { ip: req.ip });
+  res.status(401).json({ error: "Unauthorized - invalid or missing API key" });
 }
 
 function createMcpServer(): Server {
@@ -68,7 +56,7 @@ function createMcpServer(): Server {
 
   // List tools handler
   server.setRequestHandler(
-    { method: "tools/list" } as any,
+    ListToolsRequestSchema,
     async () => {
       logger.debug("Listing available tools");
       return { tools: workItemTools };
@@ -77,7 +65,7 @@ function createMcpServer(): Server {
 
   // Call tool handler
   server.setRequestHandler(
-    { method: "tools/call" } as any,
+    CallToolRequestSchema,
     async (request: any) => {
       const toolName = request.params.name as string;
       const args = request.params.arguments as Record<string, unknown>;
@@ -101,7 +89,7 @@ function createMcpServer(): Server {
           content: [
             {
               type: "text" as const,
-              text: `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
+              text: JSON.stringify({ result: "error" }),
             },
           ],
           isError: true,
@@ -113,175 +101,153 @@ function createMcpServer(): Server {
   return server;
 }
 
-// Streamable HTTP Transport for Copilot Studio
+// Express HTTP Transport for Copilot Studio
 async function startHttpServer() {
+  const app = express();
+
   // Store active transports by session ID
   const transports: Record<string, StreamableHTTPServerTransport> = {};
 
-  // Helper to read request body as JSON
-  function readBody(req: IncomingMessage): Promise<any> {
-    return new Promise((resolve, reject) => {
-      let data = "";
-      req.on("data", (chunk) => (data += chunk));
-      req.on("end", () => {
-        try {
-          resolve(data ? JSON.parse(data) : undefined);
-        } catch (e) {
-          reject(e);
-        }
-      });
-      req.on("error", reject);
-    });
-  }
-
-  const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-    const url = new URL(req.url || "/", `http://${req.headers.host}`);
-
-    // CORS headers for Copilot Studio
+  // CORS
+  app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, x-api-key, mcp-session-id");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, x-api-key, apikey, mcp-session-id");
     res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
-
     if (req.method === "OPTIONS") {
-      res.writeHead(204);
-      res.end();
+      res.sendStatus(204);
       return;
     }
-
-    // Health check endpoint (no auth required)
-    if (url.pathname === "/health" || url.pathname === "/") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
-        status: "healthy",
-        server: "mcp-azure-devops-server",
-        version: "1.0.0",
-        transport: "streamable-http",
-        authEnabled: !!API_KEY,
-        tools: workItemTools.length,
-      }));
-      return;
-    }
-
-    // --- Streamable HTTP /mcp endpoint ---
-    if (url.pathname === "/mcp") {
-      // Authenticate all /mcp requests
-      if (!authenticateRequest(req, res)) return;
-
-      // POST /mcp - Initialize or send messages
-      if (req.method === "POST") {
-        const body = await readBody(req);
-        (req as any).body = body;
-
-        const sessionId = req.headers["mcp-session-id"] as string | undefined;
-
-        if (sessionId && transports[sessionId]) {
-          // Existing session - forward to transport
-          const transport = transports[sessionId];
-          await transport.handleRequest(req, res, body);
-          return;
-        }
-
-        if (!sessionId && isInitializeRequest(body)) {
-          // New session - create transport and server
-          logger.info("New Streamable HTTP session initializing");
-
-          const transport = new StreamableHTTPServerTransport({
-            sessionIdGenerator: () => randomUUID(),
-            onsessioninitialized: (sid) => {
-              logger.info("Session initialized", { sessionId: sid });
-              transports[sid] = transport;
-            },
-          });
-
-          transport.onclose = () => {
-            const sid = transport.sessionId;
-            if (sid && transports[sid]) {
-              logger.info("Transport closed, cleaning up", { sessionId: sid });
-              delete transports[sid];
-            }
-          };
-
-          const server = createMcpServer();
-          await server.connect(transport);
-          await transport.handleRequest(req, res, body);
-          return;
-        }
-
-        // Invalid request
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({
-          jsonrpc: "2.0",
-          error: { code: -32000, message: "Bad Request: No valid session ID or not an initialization request" },
-          id: null,
-        }));
-        return;
-      }
-
-      // GET /mcp - SSE stream for existing session
-      if (req.method === "GET") {
-        const sessionId = req.headers["mcp-session-id"] as string | undefined;
-        if (!sessionId || !transports[sessionId]) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Invalid or missing session ID" }));
-          return;
-        }
-        const transport = transports[sessionId];
-        await transport.handleRequest(req, res);
-        return;
-      }
-
-      // DELETE /mcp - Terminate session
-      if (req.method === "DELETE") {
-        const sessionId = req.headers["mcp-session-id"] as string | undefined;
-        if (!sessionId || !transports[sessionId]) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Invalid or missing session ID" }));
-          return;
-        }
-        const transport = transports[sessionId];
-        await transport.handleRequest(req, res);
-        return;
-      }
-    }
-
-    // --- Legacy SSE /sse endpoint (backward compatibility) ---
-    if (url.pathname === "/sse" && req.method === "GET") {
-      if (!authenticateRequest(req, res)) return;
-
-      logger.info("New legacy SSE connection request");
-      const server = createMcpServer();
-      const transport = new SSEServerTransport("/messages", res);
-
-      res.on("close", () => {
-        logger.info("Legacy SSE connection closed");
-      });
-
-      await server.connect(transport);
-      return;
-    }
-
-    // --- Legacy /messages endpoint (backward compatibility) ---
-    if (url.pathname === "/messages" && req.method === "POST") {
-      if (!authenticateRequest(req, res)) return;
-
-      // For legacy SSE, handled by SSEServerTransport internally
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Use /mcp endpoint for Streamable HTTP transport" }));
-      return;
-    }
-
-    // 404 for unknown routes
-    res.writeHead(404, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Not found" }));
+    next();
   });
 
-  httpServer.listen(PORT, "0.0.0.0", () => {
+  // Request logging
+  app.use((req, _res, next) => {
+    logger.info(`${req.method} ${req.path}`);
+    next();
+  });
+
+  // Health check (no auth)
+  app.get(["/health", "/"], (_req, res) => {
+    res.json({
+      status: "healthy",
+      server: "mcp-azure-devops-server",
+      version: "1.0.0",
+      transport: "streamable-http",
+      authEnabled: !!API_KEY,
+      tools: workItemTools.length,
+    });
+  });
+
+  // Streamable HTTP handler for POST /mcp and /sse
+  async function handleMcpPost(req: Request, res: Response) {
+    try {
+      const body = req.body;
+      const sessionId = req.headers["mcp-session-id"] as string | undefined;
+
+      if (sessionId && transports[sessionId]) {
+        const transport = transports[sessionId];
+        await transport.handleRequest(req, res, body);
+        return;
+      }
+
+      if (!sessionId && isInitializeRequest(body)) {
+        logger.info("New Streamable HTTP session initializing");
+
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (sid) => {
+            logger.info("Session initialized", { sessionId: sid });
+            transports[sid] = transport;
+          },
+        });
+
+        transport.onclose = () => {
+          const sid = transport.sessionId;
+          if (sid && transports[sid]) {
+            logger.info("Transport closed, cleaning up", { sessionId: sid });
+            delete transports[sid];
+          }
+        };
+
+        const server = createMcpServer();
+        await server.connect(transport);
+        await transport.handleRequest(req, res, body);
+        return;
+      }
+
+      res.status(400).json({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Bad Request: No valid session ID or not an initialization request" },
+        id: null,
+      });
+    } catch (error) {
+      logger.error("Error handling MCP POST", error);
+      if (!res.headersSent) {
+        res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal error" }, id: null });
+      }
+    }
+  }
+
+  // Streamable HTTP handler for GET /mcp and /sse (SSE stream)
+  async function handleMcpGet(req: Request, res: Response) {
+    try {
+      const sessionId = req.headers["mcp-session-id"] as string | undefined;
+      if (!sessionId || !transports[sessionId]) {
+        res.status(400).json({ error: "Invalid or missing session ID" });
+        return;
+      }
+      const transport = transports[sessionId];
+      await transport.handleRequest(req, res);
+    } catch (error) {
+      logger.error("Error handling MCP GET", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Internal error" });
+      }
+    }
+  }
+
+  // Streamable HTTP handler for DELETE /mcp and /sse (terminate session)
+  async function handleMcpDelete(req: Request, res: Response) {
+    try {
+      const sessionId = req.headers["mcp-session-id"] as string | undefined;
+      if (!sessionId || !transports[sessionId]) {
+        res.status(400).json({ error: "Invalid or missing session ID" });
+        return;
+      }
+      const transport = transports[sessionId];
+      await transport.handleRequest(req, res);
+    } catch (error) {
+      logger.error("Error handling MCP DELETE", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Internal error" });
+      }
+    }
+  }
+
+  // Mount MCP routes on both /mcp and /sse (Copilot Studio uses /sse)
+  app.post("/mcp", apiKeyAuth, express.json(), handleMcpPost);
+  app.get("/mcp", apiKeyAuth, handleMcpGet);
+  app.delete("/mcp", apiKeyAuth, handleMcpDelete);
+
+  app.post("/sse", apiKeyAuth, express.json(), handleMcpPost);
+  app.get("/sse", apiKeyAuth, handleMcpGet);
+  app.delete("/sse", apiKeyAuth, handleMcpDelete);
+
+  // Global error handler
+  app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+    logger.error("Unhandled error", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.listen(PORT, "0.0.0.0", () => {
     logger.info(`MCP Azure DevOps Server listening on http://0.0.0.0:${PORT}`);
     logger.info("Endpoints:");
     logger.info(`  Health:     http://0.0.0.0:${PORT}/health`);
-    logger.info(`  MCP:        http://0.0.0.0:${PORT}/mcp (Streamable HTTP)`);
-    logger.info(`  SSE:        http://0.0.0.0:${PORT}/sse (Legacy SSE)`);
+    logger.info(`  MCP:        http://0.0.0.0:${PORT}/mcp`);
+    logger.info(`  SSE:        http://0.0.0.0:${PORT}/sse`);
     logger.info(`  Auth:       ${API_KEY ? "API key required" : "DISABLED (set MCP_API_KEY to enable)"}`);
   });
 }
@@ -324,6 +290,15 @@ process.on("SIGINT", async () => {
 process.on("SIGTERM", async () => {
   logger.info("Server terminating");
   process.exit(0);
+});
+
+// Catch unhandled errors to prevent crashes
+process.on("uncaughtException", (error) => {
+  logger.error("Uncaught exception", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  logger.error("Unhandled rejection", reason);
 });
 
 main();

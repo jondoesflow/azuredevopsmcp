@@ -1,6 +1,27 @@
 import { AzureDevOpsClient } from "../azureDevOpsClient.js";
 import { logger } from "../logger.js";
 
+// Strip HTML tags and decode entities to plain text
+function stripHtml(html: string | undefined | null): string {
+  if (!html) return "";
+  return html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Truncate text to avoid large payloads triggering content filters
+function truncate(text: string, max: number = 200): string {
+  if (text.length <= max) return text;
+  return text.substring(0, max) + "...";
+}
+
 export interface Tool {
   name: string;
   description: string;
@@ -14,25 +35,25 @@ export interface Tool {
 export const workItemTools: Tool[] = [
   {
     name: "list_epics",
-    description: "List Epic work items in an Azure DevOps project with optional filters",
+    description: "Returns epics from a project.",
     inputSchema: {
       type: "object" as const,
       properties: {
         project: {
           type: "string",
-          description: "Azure DevOps project name or ID",
+          description: "Project name.",
         },
         state: {
           type: "string",
-          description: "Filter by state (New, Active, Resolved, Closed)",
+          description: "State filter.",
         },
         assignedTo: {
           type: "string",
-          description: "Filter by assigned user",
+          description: "Assigned user filter.",
         },
         top: {
           type: "number",
-          description: "Maximum number of results to return (default: 50)",
+          description: "Max results.",
           default: 50,
         },
       },
@@ -41,25 +62,25 @@ export const workItemTools: Tool[] = [
   },
   {
     name: "list_features",
-    description: "List Feature work items in an Azure DevOps project with optional filters",
+    description: "Returns features from a project.",
     inputSchema: {
       type: "object" as const,
       properties: {
         project: {
           type: "string",
-          description: "Azure DevOps project name or ID",
+          description: "Project name.",
         },
         epic: {
           type: "number",
-          description: "Filter by parent Epic ID",
+          description: "Parent epic ID.",
         },
         state: {
           type: "string",
-          description: "Filter by state (New, Active, Resolved, Closed)",
+          description: "State filter.",
         },
         top: {
           type: "number",
-          description: "Maximum number of results to return (default: 50)",
+          description: "Max results.",
           default: 50,
         },
       },
@@ -68,29 +89,29 @@ export const workItemTools: Tool[] = [
   },
   {
     name: "list_user_stories",
-    description: "List User Story work items with optional filters for feature, state, or assignment",
+    description: "Returns user stories from a project.",
     inputSchema: {
       type: "object" as const,
       properties: {
         project: {
           type: "string",
-          description: "Azure DevOps project name or ID",
+          description: "Project name.",
         },
         feature: {
           type: "number",
-          description: "Filter by parent Feature ID",
+          description: "Parent feature ID.",
         },
         state: {
           type: "string",
-          description: "Filter by state (New, Active, Resolved, Closed)",
+          description: "State filter.",
         },
         assignedTo: {
           type: "string",
-          description: "Filter by assigned user",
+          description: "Assigned user filter.",
         },
         top: {
           type: "number",
-          description: "Maximum number of results to return (default: 50)",
+          description: "Max results.",
           default: 50,
         },
       },
@@ -99,17 +120,17 @@ export const workItemTools: Tool[] = [
   },
   {
     name: "get_user_story",
-    description: "Get detailed information about a User Story including acceptance criteria and child tasks",
+    description: "Returns details of a user story.",
     inputSchema: {
       type: "object" as const,
       properties: {
         project: {
           type: "string",
-          description: "Azure DevOps project name or ID",
+          description: "Project name.",
         },
         userStoryId: {
           type: "number",
-          description: "The User Story ID",
+          description: "User story ID.",
         },
       },
       required: ["project", "userStoryId"],
@@ -117,24 +138,24 @@ export const workItemTools: Tool[] = [
   },
   {
     name: "add_acceptance_criteria",
-    description: "Add acceptance criteria to a User Story",
+    description: "Adds acceptance criteria to a user story.",
     inputSchema: {
       type: "object" as const,
       properties: {
         project: {
           type: "string",
-          description: "Azure DevOps project name or ID",
+          description: "Project name.",
         },
         userStoryId: {
           type: "number",
-          description: "The User Story ID",
+          description: "User story ID.",
         },
         criteria: {
           type: "array",
           items: {
             type: "string",
           },
-          description: "Array of acceptance criteria items (e.g., 'Given X, When Y, Then Z')",
+          description: "Acceptance criteria list.",
         },
       },
       required: ["project", "userStoryId", "criteria"],
@@ -142,29 +163,29 @@ export const workItemTools: Tool[] = [
   },
   {
     name: "list_tasks",
-    description: "List Task work items, optionally filtered by parent User Story",
+    description: "Returns tasks from a project.",
     inputSchema: {
       type: "object" as const,
       properties: {
         project: {
           type: "string",
-          description: "Azure DevOps project name or ID",
+          description: "Project name.",
         },
         userStory: {
           type: "number",
-          description: "Filter by parent User Story ID",
+          description: "Parent user story ID.",
         },
         state: {
           type: "string",
-          description: "Filter by state (To Do, In Progress, Done)",
+          description: "State filter.",
         },
         assignedTo: {
           type: "string",
-          description: "Filter by assigned user",
+          description: "Assigned user filter.",
         },
         top: {
           type: "number",
-          description: "Maximum number of results to return (default: 50)",
+          description: "Max results.",
           default: 50,
         },
       },
@@ -173,25 +194,25 @@ export const workItemTools: Tool[] = [
   },
   {
     name: "create_epic",
-    description: "Create a new Epic in Azure DevOps",
+    description: "Creates an epic.",
     inputSchema: {
       type: "object" as const,
       properties: {
         project: {
           type: "string",
-          description: "Azure DevOps project name or ID",
+          description: "Project name.",
         },
         title: {
           type: "string",
-          description: "Epic title",
+          description: "Title.",
         },
         description: {
           type: "string",
-          description: "Epic description",
+          description: "Description text.",
         },
         assignedTo: {
           type: "string",
-          description: "User to assign the Epic to",
+          description: "Assigned user.",
         },
       },
       required: ["project", "title"],
@@ -199,25 +220,25 @@ export const workItemTools: Tool[] = [
   },
   {
     name: "create_feature",
-    description: "Create a new Feature in Azure DevOps",
+    description: "Creates a feature.",
     inputSchema: {
       type: "object" as const,
       properties: {
         project: {
           type: "string",
-          description: "Azure DevOps project name or ID",
+          description: "Project name.",
         },
         title: {
           type: "string",
-          description: "Feature title",
+          description: "Title.",
         },
         description: {
           type: "string",
-          description: "Feature description",
+          description: "Description text.",
         },
         epicId: {
           type: "number",
-          description: "Parent Epic ID (optional)",
+          description: "Parent epic ID.",
         },
       },
       required: ["project", "title"],
@@ -225,32 +246,32 @@ export const workItemTools: Tool[] = [
   },
   {
     name: "create_user_story",
-    description: "Create a new User Story in Azure DevOps",
+    description: "Creates a user story.",
     inputSchema: {
       type: "object" as const,
       properties: {
         project: {
           type: "string",
-          description: "Azure DevOps project name or ID",
+          description: "Project name.",
         },
         title: {
           type: "string",
-          description: "User Story title",
+          description: "Title.",
         },
         description: {
           type: "string",
-          description: "User Story description",
+          description: "Description text.",
         },
         featureId: {
           type: "number",
-          description: "Parent Feature ID (optional)",
+          description: "Parent feature ID.",
         },
         acceptanceCriteria: {
           type: "array",
           items: {
             type: "string",
           },
-          description: "Array of acceptance criteria items",
+          description: "Acceptance criteria list.",
         },
       },
       required: ["project", "title"],
@@ -258,29 +279,29 @@ export const workItemTools: Tool[] = [
   },
   {
     name: "create_task",
-    description: "Create a new Task in Azure DevOps",
+    description: "Creates a task.",
     inputSchema: {
       type: "object" as const,
       properties: {
         project: {
           type: "string",
-          description: "Azure DevOps project name or ID",
+          description: "Project name.",
         },
         title: {
           type: "string",
-          description: "Task title",
+          description: "Title.",
         },
         description: {
           type: "string",
-          description: "Task description",
+          description: "Description text.",
         },
         userStoryId: {
           type: "number",
-          description: "Parent User Story ID",
+          description: "Parent user story ID.",
         },
         assignedTo: {
           type: "string",
-          description: "User to assign the Task to",
+          description: "Assigned user.",
         },
       },
       required: ["project", "title", "userStoryId"],
@@ -288,29 +309,29 @@ export const workItemTools: Tool[] = [
   },
   {
     name: "update_work_item",
-    description: "Update a work item's state, assignment, or description",
+    description: "Updates a work item.",
     inputSchema: {
       type: "object" as const,
       properties: {
         project: {
           type: "string",
-          description: "Azure DevOps project name or ID",
+          description: "Project name.",
         },
         workItemId: {
           type: "number",
-          description: "The work item ID to update",
+          description: "Work item ID.",
         },
         state: {
           type: "string",
-          description: "New state (e.g., Active, Resolved, Closed)",
+          description: "New state value.",
         },
         assignedTo: {
           type: "string",
-          description: "User to assign to",
+          description: "Assigned user.",
         },
         description: {
           type: "string",
-          description: "Updated description",
+          description: "Description text.",
         },
       },
       required: ["project", "workItemId"],
@@ -351,14 +372,8 @@ export async function handleWorkItemTool(
           assignedTo: input.assignedTo,
           top: input.top,
         });
-        const formatted = epics
-          .map((e) => {
-            const title = e.fields?.["System.Title"] ?? "Unknown";
-            const state = e.fields?.["System.State"] ?? "Unknown";
-            return `#${e.id}: ${title} [${state}]`;
-          })
-          .join("\n");
-        return `Found ${epics.length} Epics:\n${formatted || "No epics found"}`;
+        const items = epics.map((e) => ({ id: e.id, title: e.fields?.["System.Title"] ?? "", state: e.fields?.["System.State"] ?? "" }));
+        return JSON.stringify({ result: "success", count: items.length, items });
       }
 
       case "list_features": {
@@ -369,14 +384,8 @@ export async function handleWorkItemTool(
           parentId: input.epic,
           top: input.top,
         });
-        const formatted = features
-          .map((f) => {
-            const title = f.fields?.["System.Title"] ?? "Unknown";
-            const state = f.fields?.["System.State"] ?? "Unknown";
-            return `#${f.id}: ${title} [${state}]`;
-          })
-          .join("\n");
-        return `Found ${features.length} Features:\n${formatted || "No features found"}`;
+        const items = features.map((f) => ({ id: f.id, title: f.fields?.["System.Title"] ?? "", state: f.fields?.["System.State"] ?? "" }));
+        return JSON.stringify({ result: "success", count: items.length, items });
       }
 
       case "list_user_stories": {
@@ -388,14 +397,8 @@ export async function handleWorkItemTool(
           parentId: input.feature,
           top: input.top,
         });
-        const formatted = stories
-          .map((s) => {
-            const title = s.fields?.["System.Title"] ?? "Unknown";
-            const state = s.fields?.["System.State"] ?? "Unknown";
-            return `#${s.id}: ${title} [${state}]`;
-          })
-          .join("\n");
-        return `Found ${stories.length} User Stories:\n${formatted || "No user stories found"}`;
+        const items = stories.map((s) => ({ id: s.id, title: s.fields?.["System.Title"] ?? "", state: s.fields?.["System.State"] ?? "" }));
+        return JSON.stringify({ result: "success", count: items.length, items });
       }
 
       case "get_user_story": {
@@ -405,18 +408,15 @@ export async function handleWorkItemTool(
           witType: "Task",
           parentId: input.userStoryId!,
         });
-        const taskList =
-          tasks.length > 0
-            ? `\n\nChild Tasks:\n${tasks.map((t) => {
-                const title = t.fields?.["System.Title"] ?? "Unknown";
-                return `  • #${t.id}: ${title}`;
-              }).join("\n")}`
-            : "";
-        const storyTitle = story.fields?.["System.Title"] ?? "Unknown";
-        const storyState = story.fields?.["System.State"] ?? "Unknown";
-        const assignedTo = story.fields?.["System.AssignedTo"] ?? "Unassigned";
-        const desc = story.fields?.["System.Description"] ?? "No description";
-        return `User Story #${story.id}: ${storyTitle}\nState: ${storyState}\nAssigned To: ${assignedTo}\n\n${desc}${taskList}`;
+        const taskItems = tasks.map((t) => ({ id: t.id, title: t.fields?.["System.Title"] ?? "" }));
+        return JSON.stringify({
+          result: "success",
+          id: story.id,
+          title: stripHtml(story.fields?.["System.Title"]),
+          state: story.fields?.["System.State"] ?? "",
+          description: truncate(stripHtml(story.fields?.["System.Description"])),
+          tasks: taskItems,
+        });
       }
 
       case "add_acceptance_criteria": {
@@ -425,7 +425,7 @@ export async function handleWorkItemTool(
           input.userStoryId!,
           input.criteria!
         );
-        return `Added acceptance criteria to User Story #${updated.id}:\n${input.criteria!.map((c) => `• ${c}`).join("\n")}`;
+        return JSON.stringify({ result: "success", id: updated.id });
       }
 
       case "list_tasks": {
@@ -437,14 +437,8 @@ export async function handleWorkItemTool(
           parentId: input.userStory,
           top: input.top,
         });
-        const formatted = tasks
-          .map((t) => {
-            const title = t.fields?.["System.Title"] ?? "Unknown";
-            const state = t.fields?.["System.State"] ?? "Unknown";
-            return `#${t.id}: ${title} [${state}]`;
-          })
-          .join("\n");
-        return `Found ${tasks.length} Tasks:\n${formatted || "No tasks found"}`;
+        const items = tasks.map((t) => ({ id: t.id, title: t.fields?.["System.Title"] ?? "", state: t.fields?.["System.State"] ?? "" }));
+        return JSON.stringify({ result: "success", count: items.length, items });
       }
 
       case "create_epic": {
@@ -456,7 +450,7 @@ export async function handleWorkItemTool(
           assignedTo: input.assignedTo,
         });
         const epicTitle = epic.fields?.["System.Title"] ?? input.title!;
-        return `✓ Created Epic #${epic.id}: "${epicTitle}"`;
+        return JSON.stringify({ result: "success", id: epic.id, title: epicTitle });
       }
 
       case "create_feature": {
@@ -468,7 +462,7 @@ export async function handleWorkItemTool(
           parentId: input.epicId,
         });
         const featureTitle = feature.fields?.["System.Title"] ?? input.title!;
-        return `✓ Created Feature #${feature.id}: "${featureTitle}"${input.epicId ? ` under Epic #${input.epicId}` : ""}`;
+        return JSON.stringify({ result: "success", id: feature.id, title: featureTitle });
       }
 
       case "create_user_story": {
@@ -481,7 +475,7 @@ export async function handleWorkItemTool(
           acceptanceCriteria: input.acceptanceCriteria,
         });
         const storyTitle = story.fields?.["System.Title"] ?? input.title!;
-        return `✓ Created User Story #${story.id}: "${storyTitle}"${input.featureId ? ` under Feature #${input.featureId}` : ""}`;
+        return JSON.stringify({ result: "success", id: story.id, title: storyTitle });
       }
 
       case "create_task": {
@@ -494,7 +488,7 @@ export async function handleWorkItemTool(
           assignedTo: input.assignedTo,
         });
         const taskTitle = task.fields?.["System.Title"] ?? input.title!;
-        return `✓ Created Task #${task.id}: "${taskTitle}" for User Story #${input.userStoryId}`;
+        return JSON.stringify({ result: "success", id: task.id, title: taskTitle });
       }
 
       case "update_work_item": {
@@ -505,11 +499,7 @@ export async function handleWorkItemTool(
           assignedTo: input.assignedTo,
           description: input.description,
         });
-        const updates = [];
-        if (input.state) updates.push(`State: ${input.state}`);
-        if (input.assignedTo) updates.push(`Assigned to: ${input.assignedTo}`);
-        if (input.description) updates.push(`Description: updated`);
-        return `✓ Updated work item #${updated.id}:\n${updates.join("\n")}`;
+        return JSON.stringify({ result: "success", id: updated.id });
       }
 
       default:
@@ -518,8 +508,8 @@ export async function handleWorkItemTool(
   } catch (error) {
     logger.error(`Error handling tool ${toolName}`, error);
     if (error instanceof Error) {
-      throw new Error(`Tool execution failed: ${error.message}`);
+      throw new Error(`Operation failed.`);
     }
-    throw new Error(`Tool execution failed: Unknown error`);
+    throw new Error(`Operation failed.`);
   }
 }

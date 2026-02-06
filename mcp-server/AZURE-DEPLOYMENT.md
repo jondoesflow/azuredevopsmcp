@@ -1,379 +1,339 @@
-# Azure Deployment Guide
+# Azure Deployment Guide - MCP Azure DevOps Server
 
 ## Overview
 
-This guide explains how to deploy the MCP Azure DevOps Server to Azure and configure it to write to a different Azure DevOps organization (cross-tenancy support).
+Deploy the MCP Azure DevOps Server to Azure Container Instances (ACI) with Streamable HTTP transport for integration with Microsoft Copilot Studio.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ Tenancy A (Azure Subscription)                              │
-│ ┌──────────────────────────────────────────────────────────┐│
-│ │ Azure Container Instances                                ││
-│ │ ┌────────────────────────────────────────────────────┐  ││
-│ │ │ MCP Azure DevOps Server (Node.js)                 │  ││
-│ │ │ - Configured with Tenancy B's PAT token           │  ││
-│ │ │ - Makes REST calls to Tenancy B's ADO            │  ││
-│ │ └────────────────────────────────────────────────────┘  ││
-│ └──────────────────────────────────────────────────────────┘│
-│ ┌──────────────────────────────────────────────────────────┐│
-│ │ Azure Container Registry                                  ││
-│ │ - Stores Docker image                                    ││
-│ └──────────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          │ HTTPS
-                          │
-┌─────────────────────────────────────────────────────────────┐
-│ Tenancy B (Azure DevOps)                                    │
-│ ┌──────────────────────────────────────────────────────────┐│
-│ │ Azure DevOps Organization                                ││
-│ │ - Receives work item creation/update requests            ││
-│ │ - Authenticated with PAT token                           ││
-│ └──────────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────────┘
+Copilot Studio
+    |
+    | POST /sse (Streamable HTTP)
+    v
+Azure Container Instances (port 80)
+    MCP Azure DevOps Server (Node.js + Express)
+    DNS: <your-label>.<region>.azurecontainer.io
+    |
+    | HTTPS (PAT auth)
+    v
+Azure DevOps Organization
+    Work Items API
 ```
+
+**Key components:**
+- **Azure Container Registry (ACR)** - stores the Docker image
+- **Azure Container Instances (ACI)** - runs the server on port 80 with a public DNS label
+- **MCP Server** - Express + Streamable HTTP transport, serves `/mcp`, `/sse`, and `/health` endpoints
 
 ## Prerequisites
 
-### On Your Local Machine
+1. **Azure CLI** installed and logged in - [Install Azure CLI](https://aka.ms/installazurecliwindows)
+2. **Docker Desktop** installed and running - [Install Docker](https://www.docker.com/products/docker-desktop)
+3. **Azure Subscription** with Contributor role
+4. **Azure DevOps PAT** with Work Items (Read & Write) scope
 
-1. **Azure CLI** - Command-line tool for Azure management
-   - [Download for Windows](https://aka.ms/installazurecliwindows)
-   - [Download for macOS](https://aka.ms/InstallAzureCLIDeb)
-   - [Download for Linux](https://aka.ms/InstallAzureCLIDeb)
+### Generate an Azure DevOps PAT
 
-2. **Docker Desktop** - For building and testing container images
-   - [Download Docker Desktop](https://www.docker.com/products/docker-desktop)
-
-3. **PowerShell 5.1+** (Windows)
-   - Usually pre-installed on Windows 10+
-
-### In Azure
-
-1. **Azure Subscription**
-   - Already have one? You can reuse it
-   - Need one? [Create a free account](https://azure.microsoft.com/en-us/free/)
-
-2. **Appropriate Azure permissions**
-   - Contributor role on the subscription (to create resources)
-
-3. **In Tenancy B's Azure DevOps** (the org you want to write to)
-   - Personal Access Token (PAT) with **Work Items (Read & Write)** scope
-   - [Generate a PAT](https://docs.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate)
-
-## Deployment Steps
-
-### Step 1: Install Prerequisites
-
-#### Azure CLI
-
-**Windows:**
-```powershell
-# Download and run installer
-Start-Process "https://aka.ms/installazurecliwindows"
-
-# Or via direct PowerShell installation:
-$ProgressPreference = 'SilentlyContinue'
-Invoke-WebRequest -Uri https://aka.ms/installazurecliwindows -OutFile AzureCLI.msi
-Start-Process msiexec.exe -Wait -ArgumentList '/I AzureCLI.msi /quiet'
-Remove-Item AzureCLI.msi
-```
-
-**macOS:**
-```bash
-brew install azure-cli
-```
-
-**Linux:**
-```bash
-curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-```
-
-#### Verify Installation
-```bash
-az --version
-docker --version
-```
-
-### Step 2: Prepare Azure Subscription
-
-```bash
-# Login to Azure
-az login
-
-# List available subscriptions
-az account list --output table
-
-# Set the subscription you want to use
-az account set --subscription "your-subscription-id"
-```
-
-### Step 3: Generate Azure DevOps PAT
-
-This PAT is for the **organization you want to write to** (e.g., your other tenancy's ADO):
-
-1. Go to: `https://dev.azure.com/<your-org>/_usersSettings/tokens`
+1. Go to `https://dev.azure.com/<your-org>/_usersSettings/tokens`
 2. Click **New Token**
-3. Configure:
-   - **Name**: "MCP Server"
-   - **Scopes**: Select **Work Items (Read & Write)**
-   - **Expiration**: Set appropriate duration (e.g., 1 year)
-4. Click **Create**
-5. **Copy the token immediately** - you'll need it for deployment
+3. Set scopes to **Work Items (Read & Write)**
+4. Copy the token immediately
 
-### Step 4: Run Deployment Script
+---
 
-The easiest way is to run the interactive setup script:
+## Step-by-Step Deployment
+
+### 1. Login to Azure
 
 ```powershell
-cd c:\Users\jorussel\transport\mcp-server
-
-# Run interactive setup
-.\setup-deploy.ps1
+az login
+az account set --subscription "<your-subscription-id>"
 ```
 
-This script will:
-- ✓ Verify Docker and Azure CLI are installed
-- ✓ Check you're logged into Azure
-- ✓ Let you select your subscription
-- ✓ Prompt for region, registry name, and ADO details
-- ✓ Execute the full deployment
-
-**Or run deploy directly with parameters:**
+### 2. Create Resource Group
 
 ```powershell
-.\deploy.ps1 `
-    -SubscriptionId "your-subscription-id" `
-    -RegistryName "mcpregistry12345" `
-    -Location "eastus" `
-    -AzureDevOpsOrg "your-ado-org" `
-    -AzureDevOpsPat "your-pat-token" `
-    -AzureDevOpsUrl "https://dev.azure.com/your-ado-org"
+az group create --name mcp-server-rg --location uksouth
 ```
 
-### Step 5: Verify Deployment
+> Change `uksouth` to your preferred region.
 
-After the script completes, verify everything is running:
+### 3. Create Azure Container Registry
 
-```bash
-# View container status
-az container show \
-  --resource-group mcp-server-rg \
-  --name mcp-azure-devops \
-  --query "{Name:name, State:instanceView.state, IP:ipAddress.ip}"
+```powershell
+az acr create `
+  --resource-group mcp-server-rg `
+  --name <your-registry-name> `
+  --sku Basic `
+  --admin-enabled true
+```
+
+> Registry name must be globally unique, lowercase alphanumeric (e.g., `mcpmyorg2025`).
+
+### 4. Build and Push Docker Image
+
+```powershell
+cd mcp-server
+
+# Build the image
+docker build -t mcp-azure-devops:v1 -f Dockerfile .
+
+# Tag for ACR
+docker tag mcp-azure-devops:v1 <your-registry-name>.azurecr.io/mcp-azure-devops:v1
+
+# Login to ACR
+az acr login --name <your-registry-name>
+
+# Push to ACR
+docker push <your-registry-name>.azurecr.io/mcp-azure-devops:v1
+```
+
+### 5. Deploy to Azure Container Instances
+
+```powershell
+# Get ACR password
+$registryPassword = az acr credential show `
+  --name <your-registry-name> `
+  --resource-group mcp-server-rg `
+  --query "passwords[0].value" -o tsv
+
+# Create container instance
+az container create `
+  --resource-group mcp-server-rg `
+  --name mcp-azure-devops `
+  --image <your-registry-name>.azurecr.io/mcp-azure-devops:v1 `
+  --cpu 1 `
+  --memory 1 `
+  --ports 80 `
+  --ip-address Public `
+  --os-type Linux `
+  --dns-name-label <your-dns-label> `
+  --registry-login-server <your-registry-name>.azurecr.io `
+  --registry-username <your-registry-name> `
+  --registry-password $registryPassword `
+  --environment-variables `
+    AZURE_DEVOPS_ORG=<your-ado-org> `
+    AZURE_DEVOPS_PAT=<your-pat-token> `
+    AZURE_DEVOPS_URL=https://dev.azure.com/<your-ado-org> `
+    PORT=80 `
+    TRANSPORT_MODE=http
+```
+
+> Replace all `<placeholders>` with your actual values.
+> The `--dns-name-label` gives you a stable URL like `<your-dns-label>.uksouth.azurecontainer.io`.
+
+### 6. Verify Deployment
+
+```powershell
+# Check container status
+az container show `
+  --resource-group mcp-server-rg `
+  --name mcp-azure-devops `
+  --query "{State:instanceView.state, FQDN:ipAddress.fqdn, IP:ipAddress.ip}" `
+  -o json
+
+# Test health endpoint
+Invoke-WebRequest -Uri "http://<your-dns-label>.<region>.azurecontainer.io/health" -UseBasicParsing
 
 # View logs
-az container logs \
-  --resource-group mcp-server-rg \
-  --name mcp-azure-devops \
-  --tail 50
+az container logs -g mcp-server-rg -n mcp-azure-devops
 ```
 
-You should see logs like:
-```
-[2026-02-05T...] [INFO] Server initializing
-[2026-02-05T...] [INFO] Azure DevOps client initialized
-[2026-02-05T...] [INFO] Server started successfully
+Expected health response:
+```json
+{
+  "status": "healthy",
+  "server": "mcp-azure-devops-server",
+  "version": "1.0.0",
+  "transport": "streamable-http",
+  "tools": 11
+}
 ```
 
 ---
 
-## Cross-Tenancy Configuration
+## Connect to Copilot Studio
 
-To have the server write to a **different Azure DevOps organization** (different tenancy):
+1. In Copilot Studio, go to your agent's **Tools** section
+2. Add a new **MCP** tool
+3. Set the URL to: `http://<your-dns-label>.<region>.azurecontainer.io/sse`
+4. Authentication: **None** (or API key if enabled - see below)
+5. Test the connection - it should discover 11 tools
 
-### 1. **Get PAT from Target Organization**
+### Copilot Studio Agent Instructions
 
-In the organization you want to write to:
-- Go to `https://dev.azure.com/<target-org>/_usersSettings/tokens`
-- Create a new PAT with **Work Items (Read & Write)** scope
-- Copy the token
+Keep your agent instructions simple to avoid triggering the Responsible AI content filter. Example:
 
-### 2. **Update Deployment**
+> You help users manage Azure DevOps work items. When a user provides project requirements, you organize them into epics, features, user stories, and tasks.
+>
+> For each work item you identify, use the appropriate tool to create it in Azure DevOps. Set clear titles and descriptions.
+>
+> If a requirement is unclear, still create the work item but note that it needs review.
+>
+> When creating user stories, include acceptance criteria. Link child items to their parents using the parent ID parameters.
 
-The easiest way is to redeploy with the new PAT:
+**Avoid** putting templates, JSON examples, Gherkin format, or detailed formatting instructions in the agent instructions - these trigger the content moderation filter.
+
+---
+
+## Enable API Key Authentication
+
+To secure the endpoint with an API key:
+
+### 1. Redeploy with MCP_API_KEY
 
 ```powershell
 # Delete current container
-az container delete \
-  --resource-group mcp-server-rg \
-  --name mcp-azure-devops \
-  --yes
+az container delete -g mcp-server-rg -n mcp-azure-devops --yes
 
-# Redeploy with new credentials
-.\deploy.ps1 `
-    -SubscriptionId "your-subscription-id" `
-    -RegistryName "mcpregistry12345" `
-    -Location "eastus" `
-    -AzureDevOpsOrg "target-org-name" `
-    -AzureDevOpsPat "target-org-pat-token" `
-    -AzureDevOpsUrl "https://dev.azure.com/target-org-name"
+# Recreate with API key (add MCP_API_KEY to environment variables)
+az container create `
+  --resource-group mcp-server-rg `
+  --name mcp-azure-devops `
+  --image <your-registry-name>.azurecr.io/mcp-azure-devops:v1 `
+  --cpu 1 --memory 1 --ports 80 `
+  --ip-address Public --os-type Linux `
+  --dns-name-label <your-dns-label> `
+  --registry-login-server <your-registry-name>.azurecr.io `
+  --registry-username <your-registry-name> `
+  --registry-password $registryPassword `
+  --environment-variables `
+    AZURE_DEVOPS_ORG=<your-ado-org> `
+    AZURE_DEVOPS_PAT=<your-pat-token> `
+    AZURE_DEVOPS_URL=https://dev.azure.com/<your-ado-org> `
+    PORT=80 `
+    TRANSPORT_MODE=http `
+    MCP_API_KEY=<your-secret-api-key>
 ```
 
-Or update just the environment variables:
+### 2. Configure in Copilot Studio
 
-```bash
-az container update \
-  --resource-group mcp-server-rg \
-  --name mcp-azure-devops \
-  --set \
-    containers[0].environmentVariables[0].value="new-org-name" \
-    containers[0].environmentVariables[1].value="new-pat-token" \
-    containers[0].environmentVariables[2].value="https://dev.azure.com/new-org-name"
+In the MCP tool configuration, set the authentication header:
+- Header name: `apikey` (no hyphens - Copilot Studio restriction)
+- Header value: your secret API key
+
+---
+
+## Updating the Server
+
+ACI does not support in-place environment variable updates. To update code or config:
+
+```powershell
+# 1. Build new image with incremented tag
+docker build -t mcp-azure-devops:v2 -f Dockerfile .
+docker tag mcp-azure-devops:v2 <your-registry-name>.azurecr.io/mcp-azure-devops:v2
+docker push <your-registry-name>.azurecr.io/mcp-azure-devops:v2
+
+# 2. Delete old container
+az container delete -g mcp-server-rg -n mcp-azure-devops --yes
+
+# 3. Recreate with new image tag (same az container create command as above, with :v2)
 ```
 
 ---
 
-## Cost Estimates
+## Environment Variables Reference
 
-| Resource | Monthly Cost | Notes |
-|----------|--------------|-------|
-| Azure Container Instances | $0.0000315/second | ~$0.81/month for always-on |
-| Azure Container Registry (Basic) | ~$5 | Includes 10GB of storage |
-| Network Data Transfer | Minimal | First 5GB/month free |
-| **Total** | **~$6-8/month** | Very cost-effective |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `AZURE_DEVOPS_ORG` | Yes | Azure DevOps organization name |
+| `AZURE_DEVOPS_PAT` | Yes | Personal Access Token |
+| `AZURE_DEVOPS_URL` | Yes | Full URL (e.g., `https://dev.azure.com/myorg`) |
+| `PORT` | No | Server port (default: `80`) |
+| `TRANSPORT_MODE` | No | `http` or `stdio` (default: `http`) |
+| `MCP_API_KEY` | No | API key for authentication (disabled if empty) |
 
-*Prices based on US East region - check [Azure Pricing](https://azure.microsoft.com/en-us/pricing/) for your region*
+---
+
+## Server Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check - returns server status and tool count |
+| `/mcp` | POST | Streamable HTTP MCP endpoint |
+| `/sse` | POST | Streamable HTTP MCP endpoint (Copilot Studio compatibility) |
+| `/sse` | GET | SSE stream for session (Streamable HTTP) |
+| `/sse` | DELETE | Close session |
+
+---
+
+## Available Tools (11)
+
+| Tool | Description |
+|------|-------------|
+| `list_epics` | Returns epics from a project |
+| `list_features` | Returns features from a project |
+| `list_user_stories` | Returns user stories from a project |
+| `get_user_story` | Returns details of a user story |
+| `add_acceptance_criteria` | Adds acceptance criteria to a user story |
+| `list_tasks` | Returns tasks from a project |
+| `create_epic` | Creates an epic |
+| `create_feature` | Creates a feature |
+| `create_user_story` | Creates a user story |
+| `create_task` | Creates a task |
+| `update_work_item` | Updates a work item |
 
 ---
 
 ## Managing the Deployment
 
 ### View Logs
-```bash
-# Last 50 lines
-az container logs \
-  --resource-group mcp-server-rg \
-  --name mcp-azure-devops \
-  --tail 50
-
-# Follow in real-time
-az container attach \
-  --resource-group mcp-server-rg \
-  --name mcp-azure-devops
+```powershell
+az container logs -g mcp-server-rg -n mcp-azure-devops
 ```
 
 ### Restart Container
-```bash
-az container restart \
-  --resource-group mcp-server-rg \
-  --name mcp-azure-devops
+```powershell
+az container restart -g mcp-server-rg -n mcp-azure-devops
 ```
 
-### Scale Up Resources
-```bash
-# Delete and recreate with more CPU/memory
-az container delete \
-  --resource-group mcp-server-rg \
-  --name mcp-azure-devops \
-  --yes
-
-# Re-run deploy.ps1 with --cpu and --memory parameters
+### Delete Everything
+```powershell
+az group delete --name mcp-server-rg --yes --no-wait
 ```
 
-### Connect to Copilot Studio
+---
 
-Once deployed, Copilot Studio can connect to your MCP server:
+## Cost Estimates
 
-1. Get the container's IP:
-```bash
-az container show \
-  --resource-group mcp-server-rg \
-  --name mcp-azure-devops \
-  --query "ipAddress.ip" -o tsv
-```
-
-2. In Copilot Studio, configure MCP server connection with that IP address
+| Resource | Monthly Cost |
+|----------|-------------|
+| Azure Container Instances (1 vCPU, 1 GB) | ~$1/month |
+| Azure Container Registry (Basic) | ~$5/month |
+| Network transfer | Minimal |
+| **Total** | **~$6/month** |
 
 ---
 
 ## Troubleshooting
 
-### Container won't start
-```bash
-# Check logs for errors
-az container logs \
-  --resource-group mcp-server-rg \
-  --name mcp-azure-devops
+### Health endpoint returns error
+- Check container logs: `az container logs -g mcp-server-rg -n mcp-azure-devops`
+- Verify the container state is "Running"
+- Ensure port 80 is exposed
 
-# Common issues:
-# - Invalid PAT token → regenerate in ADO
-# - Wrong organization name → check spelling
-# - Network blocked → check firewall for dev.azure.com:443
-```
+### Copilot Studio can't connect
+- Verify the URL uses `http://` not `https://` (ACI doesn't provide TLS by default)
+- Use the `/sse` endpoint, not `/mcp`
+- Check the health endpoint first to confirm the server is reachable
 
-### Can't connect to Azure DevOps
-```bash
-# Verify PAT hasn't expired
-# Verify PAT has correct scopes (Work Items Read & Write)
-# Verify network can reach dev.azure.com
+### Content moderation blocks tool calls
+- Simplify your Copilot Studio agent instructions (see above)
+- Avoid templates, JSON examples, or code patterns in instructions
+- The MCP server returns pure JSON data to minimize filter triggers
 
-# Test connectivity (from container):
-az container exec \
-  --resource-group mcp-server-rg \
-  --name mcp-azure-devops \
-  --exec-command "/bin/sh" \
-  # Then: curl https://dev.azure.com/health
-```
-
-### Delete Everything
-```bash
-# Remove all resources (this is permanent!)
-az group delete \
-  --name mcp-server-rg \
-  --subscription "your-subscription-id" \
-  --yes \
-  --no-wait
-```
+### PAT token issues
+- Verify the PAT hasn't expired
+- Ensure the PAT has Work Items (Read & Write) scope
+- Check the organization name matches exactly
 
 ---
 
 ## Security Best Practices
 
-1. **PAT Token Security**
-   - Never commit PAT tokens to version control
-   - Rotate PAT tokens every 90 days
-   - Use minimal scopes (Work Items Read & Write only)
-   - Regenerate immediately if exposed
-
-2. **Azure Security**
-   - Use Contributor role (not Owner)
-   - Enable audit logging on resource group
-   - Consider network isolation (VNet, Private Endpoints for future)
-
-3. **Container Security**
-   - Keep Node.js base image updated
-   - Scan ACR images for vulnerabilities
-   - Use Azure Defender for container scanning
-
----
-
-## Next Steps
-
-1. ✓ Deploy server to Azure Container Instances
-2. ✓ Connect Copilot Studio to the MCP server
-3. ⚬ Configure ADO agents/pipelines to call the MCP server
-4. ⚬ Set up monitoring and alerts
-5. ⚬ Implement backup/disaster recovery
-
----
-
-## Support & Documentation
-
-- [Azure Container Instances Docs](https://docs.microsoft.com/en-us/azure/container-instances/)
-- [Azure Container Registry Docs](https://docs.microsoft.com/en-us/azure/container-registry/)
-- [Azure DevOps REST API](https://docs.microsoft.com/en-us/rest/api/azure/devops/)
-- [MCP Specification](https://modelcontextprotocol.io/specification)
-
----
-
-## Questions?
-
-If you encounter issues:
-
-1. Check the troubleshooting section above
-2. Review container logs: `az container logs -g mcp-server-rg -n mcp-azure-devops`
-3. Verify PAT token credentials in target ADO organization
-4. Ensure network can reach `dev.azure.com:443`
+1. **Never commit PAT tokens** to version control
+2. **Rotate PAT tokens** every 90 days
+3. **Enable API key authentication** for production use
+4. **Use minimal PAT scopes** (Work Items Read & Write only)
+5. Keep the Node.js base image updated
