@@ -236,12 +236,43 @@ async function startHttpServer() {
       }
 
       let content = fileContent;
+      logger.info("Upload received", { fileName, contentLength: content.length, first50: content.substring(0, 50) });
 
-      // Try to decode base64
-      if (/^[A-Za-z0-9+/=]+$/.test(content.replace(/\s/g, "")) && content.length > 100) {
+      // Power Automate sends the entire trigger body as a JSON string: {"file":{"Content":"base64..."},"text":"filename"}
+      // Extract the actual base64 content from the nested structure
+      if (typeof content === "string" && content.trimStart().startsWith("{")) {
         try {
-          const decoded = Buffer.from(content, "base64").toString("utf-8");
-          if (decoded && !decoded.includes("\ufffd")) {
+          const parsed = JSON.parse(content);
+          if (parsed?.file?.Content) {
+            content = parsed.file.Content;
+            logger.info("Extracted Content from nested JSON", { fileName, extractedLength: content.length });
+          } else if (parsed?.file?.contentBytes) {
+            content = parsed.file.contentBytes;
+            logger.info("Extracted contentBytes from nested JSON", { fileName, extractedLength: content.length });
+          }
+        } catch {
+          // Not JSON, continue with original content
+        }
+      }
+
+      // Handle data: URI
+      const dataUriMatch = content.match(/^data:([^;]+);base64,(.+)$/s);
+      if (dataUriMatch) {
+        try {
+          content = Buffer.from(dataUriMatch[2], "base64").toString("utf-8");
+          logger.info("Decoded data URI", { fileName, size: content.length });
+        } catch {
+          res.status(400).json({ error: "Failed to decode base64 from data URI" });
+          return;
+        }
+      }
+      // Try base64 decode
+      else {
+        try {
+          const stripped = content.replace(/[\s\r\n]+/g, "");
+          const decoded = Buffer.from(stripped, "base64").toString("utf-8");
+          if (decoded.length > 100 && decoded.length < stripped.length && !decoded.substring(0, 2000).includes("\ufffd")) {
+            logger.info("Decoded base64 content", { fileName, originalSize: content.length, decodedSize: decoded.length });
             content = decoded;
           }
         } catch {
