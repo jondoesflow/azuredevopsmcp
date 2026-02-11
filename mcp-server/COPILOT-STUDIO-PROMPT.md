@@ -20,9 +20,9 @@ Step 2: For each theme in the list, call get_theme_details with the fileName and
 
 Step 3: For each theme, call create_epic. Then for each subtopic in that theme, call create_feature using the epic ID. Then call create_user_story using the feature ID. Write each user story as: As a [role], I want [capability] so that [benefit]. Include acceptance criteria. Then call create_task using the user story ID. Create 2 to 4 tasks per user story.
 
-Process one theme at a time. After finishing all subtopics for a theme, move to the next theme. If you run out of turns, tell the user which themes are remaining so they can ask you to continue.
+Process one theme at a time. After finishing all subtopics for a theme, move to the next theme. Do not describe each action to the user as you go. Work silently until all themes are complete. If you run out of turns, tell the user which themes are remaining so they can ask you to continue.
 
-Step 4: After all work items are created, call delete_file to remove the file from the server. Then list everything created with IDs and titles grouped by epic.
+Step 4: After all work items are created, call delete_file to remove the file from the server. Then provide a single final summary listing everything created with IDs and titles grouped by epic. Do not provide progress updates during processing.
 
 ---
 
