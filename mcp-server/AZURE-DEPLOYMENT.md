@@ -159,7 +159,7 @@ Expected health response:
 2. Add a new **MCP** tool
 3. Set the URL to: `http://<your-dns-label>.<region>.azurecontainer.io/sse`
 4. Authentication: **None** (or API key if enabled - see below)
-5. Test the connection - it should discover 11 tools
+5. Test the connection - it should discover 14 tools
 
 ### Copilot Studio Agent Instructions
 
@@ -174,6 +174,26 @@ Keep your agent instructions simple to avoid triggering the Responsible AI conte
 > When creating user stories, include acceptance criteria. Link child items to their parents using the parent ID parameters.
 
 **Avoid** putting templates, JSON examples, Gherkin format, or detailed formatting instructions in the agent instructions - these trigger the content moderation filter.
+
+### File Uploads from Copilot Studio
+
+The server accepts file attachments via the `process_transcript` MCP tool. In Copilot Studio:
+
+1. Enable file input in your agent (Settings > File input)
+2. In your topic, use a **Question** node with **Identify: File** to capture the upload
+3. The agent can then call `process_transcript` with the file content and name
+4. Use `System.Activity.Attachments` to access the file's `Content` (base64) and `Name`
+
+Alternatively, files can be uploaded via the REST `/upload` endpoint:
+
+```powershell
+Invoke-WebRequest -Uri "http://<your-dns>.azurecontainer.io/upload" `
+  -Method POST `
+  -Headers @{ "apikey" = "<your-api-key>"; "Content-Type" = "application/json" } `
+  -Body '{"fileName": "transcript.txt", "fileContent": "base64-or-plain-text-here"}'
+```
+
+The server automatically detects and decodes base64 content. Uploaded files are stored in memory and accessible via `list_uploaded_files` and `get_file_content` tools.
 
 ---
 
@@ -255,10 +275,12 @@ az container delete -g mcp-server-rg -n mcp-azure-devops --yes
 | `/sse` | POST | Streamable HTTP MCP endpoint (Copilot Studio compatibility) |
 | `/sse` | GET | SSE stream for session (Streamable HTTP) |
 | `/sse` | DELETE | Close session |
+| `/upload` | POST | REST file upload (JSON body: fileName, fileContent, contentType) |
+| `/files` | GET | List uploaded files |
 
 ---
 
-## Available Tools (11)
+## Available Tools (14)
 
 | Tool | Description |
 |------|-------------|
@@ -273,6 +295,9 @@ az container delete -g mcp-server-rg -n mcp-azure-devops --yes
 | `create_user_story` | Creates a user story |
 | `create_task` | Creates a task |
 | `update_work_item` | Updates a work item |
+| `process_transcript` | Accepts uploaded file content (text or base64) for processing |
+| `list_uploaded_files` | Returns list of uploaded files |
+| `get_file_content` | Returns content of an uploaded file |
 
 ---
 

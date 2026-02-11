@@ -4,7 +4,8 @@ A Model Context Protocol (MCP) server that integrates with Azure DevOps to manag
 
 ## Features
 
-- **11 Azure DevOps tools** - Create, list, update, and query work items
+- **14 tools** - Create, list, update, and query work items + file upload/processing
+- **File attachment support** - Accept file uploads from Copilot Studio
 - **Streamable HTTP transport** - Compatible with Copilot Studio MCP connector
 - **API key authentication** - Optional security for production deployments
 - **Docker containerized** - Deploy to Azure Container Instances
@@ -45,6 +46,9 @@ See [AZURE-DEPLOYMENT.md](mcp-server/AZURE-DEPLOYMENT.md) for full step-by-step 
 | `create_user_story` | Creates a user story |
 | `create_task` | Creates a task |
 | `update_work_item` | Updates a work item |
+| `process_transcript` | Accepts uploaded file content for processing |
+| `list_uploaded_files` | Returns list of uploaded files |
+| `get_file_content` | Returns content of an uploaded file |
 
 ## Environment Variables
 

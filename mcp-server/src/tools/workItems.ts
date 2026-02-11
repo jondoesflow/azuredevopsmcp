@@ -32,6 +32,16 @@ export interface Tool {
   };
 }
 
+// In-memory store for uploaded file content (keyed by filename)
+const fileStore: Map<string, { name: string; content: string; mimeType?: string; uploadedAt: Date }> = new Map();
+
+// In-memory store for file chunks being assembled (keyed by uploadId)
+const chunkStore: Map<string, { fileName: string; chunks: Map<number, string>; totalChunks: number; contentType?: string }> = new Map();
+
+export function getFileStore() {
+  return fileStore;
+}
+
 export const workItemTools: Tool[] = [
   {
     name: "list_epics",
@@ -308,6 +318,99 @@ export const workItemTools: Tool[] = [
     },
   },
   {
+    name: "process_transcript",
+    description: "Accepts uploaded file content for processing.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        fileName: {
+          type: "string",
+          description: "Name of the uploaded file.",
+        },
+        fileContent: {
+          type: "string",
+          description: "File content as text or base64 encoded string.",
+        },
+        contentType: {
+          type: "string",
+          description: "MIME type of the file.",
+        },
+      },
+      required: ["fileName", "fileContent"],
+    },
+  },
+  {
+    name: "list_uploaded_files",
+    description: "Returns list of uploaded files.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "get_file_content",
+    description: "Returns content of an uploaded file.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        fileName: {
+          type: "string",
+          description: "Name of the file to retrieve.",
+        },
+      },
+      required: ["fileName"],
+    },
+  },
+  {
+    name: "upload_file_chunk",
+    description: "Uploads one chunk of a large file.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        uploadId: {
+          type: "string",
+          description: "Unique upload session ID.",
+        },
+        fileName: {
+          type: "string",
+          description: "Name of the file being uploaded.",
+        },
+        chunkIndex: {
+          type: "number",
+          description: "Zero-based index of this chunk.",
+        },
+        totalChunks: {
+          type: "number",
+          description: "Total number of chunks for this file.",
+        },
+        chunkContent: {
+          type: "string",
+          description: "Content of this chunk.",
+        },
+        contentType: {
+          type: "string",
+          description: "MIME type of the file.",
+        },
+      },
+      required: ["uploadId", "fileName", "chunkIndex", "totalChunks", "chunkContent"],
+    },
+  },
+  {
+    name: "complete_file_upload",
+    description: "Assembles all chunks into the final file.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        uploadId: {
+          type: "string",
+          description: "Upload session ID used in upload_file_chunk.",
+        },
+      },
+      required: ["uploadId"],
+    },
+  },
+  {
     name: "update_work_item",
     description: "Updates a work item.",
     inputSchema: {
@@ -355,6 +458,13 @@ interface ToolInput {
   featureId?: number;
   acceptanceCriteria?: string[];
   workItemId?: number;
+  fileName?: string;
+  fileContent?: string;
+  contentType?: string;
+  uploadId?: string;
+  chunkIndex?: number;
+  totalChunks?: number;
+  chunkContent?: string;
 }
 
 export async function handleWorkItemTool(
@@ -489,6 +599,162 @@ export async function handleWorkItemTool(
         });
         const taskTitle = task.fields?.["System.Title"] ?? input.title!;
         return JSON.stringify({ result: "success", id: task.id, title: taskTitle });
+      }
+
+      case "process_transcript": {
+        const fileName = input.fileName!;
+        let content = input.fileContent!;
+        const contentType = input.contentType || "text/plain";
+
+        // Try to decode base64 if it looks like base64
+        if (/^[A-Za-z0-9+/=]+$/.test(content.replace(/\s/g, "")) && content.length > 100) {
+          try {
+            const decoded = Buffer.from(content, "base64").toString("utf-8");
+            // Check if decoded content is valid text
+            if (decoded && !decoded.includes("\ufffd")) {
+              content = decoded;
+            }
+          } catch {
+            // Not base64, use as-is
+          }
+        }
+
+        // Store the file
+        fileStore.set(fileName, {
+          name: fileName,
+          content,
+          mimeType: contentType,
+          uploadedAt: new Date(),
+        });
+
+        logger.info("File stored", { fileName, size: content.length, contentType });
+
+        return JSON.stringify({
+          result: "success",
+          fileName,
+          size: content.length,
+          contentType,
+          preview: truncate(content, 500),
+        });
+      }
+
+      case "list_uploaded_files": {
+        const files = Array.from(fileStore.entries()).map(([key, val]) => ({
+          fileName: val.name,
+          size: val.content.length,
+          mimeType: val.mimeType,
+          uploadedAt: val.uploadedAt.toISOString(),
+        }));
+        return JSON.stringify({ result: "success", count: files.length, files });
+      }
+
+      case "get_file_content": {
+        const file = fileStore.get(input.fileName!);
+        if (!file) {
+          return JSON.stringify({ result: "error", message: "File not found" });
+        }
+        return JSON.stringify({
+          result: "success",
+          fileName: file.name,
+          size: file.content.length,
+          mimeType: file.mimeType,
+          content: file.content,
+        });
+      }
+
+      case "upload_file_chunk": {
+        const uploadId = input.uploadId!;
+        const fileName = input.fileName!;
+        const chunkIndex = input.chunkIndex!;
+        const totalChunks = input.totalChunks!;
+        const chunkContent = input.chunkContent!;
+        const contentType = input.contentType || "text/plain";
+
+        // Get or create chunk session
+        if (!chunkStore.has(uploadId)) {
+          chunkStore.set(uploadId, {
+            fileName,
+            chunks: new Map(),
+            totalChunks,
+            contentType,
+          });
+        }
+
+        const session = chunkStore.get(uploadId)!;
+        session.chunks.set(chunkIndex, chunkContent);
+
+        const received = session.chunks.size;
+        logger.info("Chunk received", { uploadId, chunkIndex, received, totalChunks });
+
+        return JSON.stringify({
+          result: "success",
+          uploadId,
+          chunkIndex,
+          chunksReceived: received,
+          totalChunks,
+          complete: received === totalChunks,
+        });
+      }
+
+      case "complete_file_upload": {
+        const uploadId = input.uploadId!;
+        const session = chunkStore.get(uploadId);
+
+        if (!session) {
+          return JSON.stringify({ result: "error", message: "Upload session not found" });
+        }
+
+        if (session.chunks.size < session.totalChunks) {
+          return JSON.stringify({
+            result: "error",
+            message: "Not all chunks received",
+            chunksReceived: session.chunks.size,
+            totalChunks: session.totalChunks,
+          });
+        }
+
+        // Assemble chunks in order
+        let fullContent = "";
+        for (let i = 0; i < session.totalChunks; i++) {
+          const chunk = session.chunks.get(i);
+          if (!chunk) {
+            return JSON.stringify({ result: "error", message: `Missing chunk ${i}` });
+          }
+          fullContent += chunk;
+        }
+
+        // Try to decode base64
+        if (/^[A-Za-z0-9+/=]+$/.test(fullContent.replace(/\s/g, "")) && fullContent.length > 100) {
+          try {
+            const decoded = Buffer.from(fullContent, "base64").toString("utf-8");
+            if (decoded && !decoded.includes("\ufffd")) {
+              fullContent = decoded;
+            }
+          } catch {
+            // Not base64, use as-is
+          }
+        }
+
+        // Store assembled file
+        fileStore.set(session.fileName, {
+          name: session.fileName,
+          content: fullContent,
+          mimeType: session.contentType,
+          uploadedAt: new Date(),
+        });
+
+        // Clean up chunk session
+        chunkStore.delete(uploadId);
+
+        logger.info("File assembled from chunks", { fileName: session.fileName, size: fullContent.length });
+
+        return JSON.stringify({
+          result: "success",
+          fileName: session.fileName,
+          size: fullContent.length,
+          contentType: session.contentType,
+          preview: truncate(fullContent, 500),
+        });
       }
 
       case "update_work_item": {

@@ -7,7 +7,7 @@ import { isInitializeRequest, ListToolsRequestSchema, CallToolRequestSchema } fr
 import { loadConfig } from "./config.js";
 import { logger } from "./logger.js";
 import { AzureDevOpsClient } from "./azureDevOpsClient.js";
-import { workItemTools, handleWorkItemTool } from "./tools/workItems.js";
+import { workItemTools, handleWorkItemTool, getFileStore } from "./tools/workItems.js";
 
 const PORT = parseInt(process.env.PORT || "80", 10);
 const TRANSPORT_MODE = process.env.TRANSPORT_MODE || "http"; // "http" or "stdio"
@@ -225,12 +225,70 @@ async function startHttpServer() {
     }
   }
 
+  // File upload endpoint (REST, not MCP) - accepts JSON body with fileName and fileContent
+  app.post("/upload", apiKeyAuth, express.json({ limit: "50mb" }), (req: Request, res: Response) => {
+    try {
+      const { fileName, fileContent, contentType } = req.body;
+
+      if (!fileName || !fileContent) {
+        res.status(400).json({ error: "fileName and fileContent are required" });
+        return;
+      }
+
+      let content = fileContent;
+
+      // Try to decode base64
+      if (/^[A-Za-z0-9+/=]+$/.test(content.replace(/\s/g, "")) && content.length > 100) {
+        try {
+          const decoded = Buffer.from(content, "base64").toString("utf-8");
+          if (decoded && !decoded.includes("\ufffd")) {
+            content = decoded;
+          }
+        } catch {
+          // Not base64, use as-is
+        }
+      }
+
+      const fileStore = getFileStore();
+      fileStore.set(fileName, {
+        name: fileName,
+        content,
+        mimeType: contentType || "text/plain",
+        uploadedAt: new Date(),
+      });
+
+      logger.info("File uploaded via REST", { fileName, size: content.length });
+
+      res.json({
+        result: "success",
+        fileName,
+        size: content.length,
+        contentType: contentType || "text/plain",
+      });
+    } catch (error) {
+      logger.error("Error handling file upload", error);
+      res.status(500).json({ error: "Upload failed" });
+    }
+  });
+
+  // List uploaded files endpoint (REST)
+  app.get("/files", apiKeyAuth, (_req: Request, res: Response) => {
+    const fileStore = getFileStore();
+    const files = Array.from(fileStore.entries()).map(([key, val]) => ({
+      fileName: val.name,
+      size: val.content.length,
+      mimeType: val.mimeType,
+      uploadedAt: val.uploadedAt.toISOString(),
+    }));
+    res.json({ count: files.length, files });
+  });
+
   // Mount MCP routes on both /mcp and /sse (Copilot Studio uses /sse)
-  app.post("/mcp", apiKeyAuth, express.json(), handleMcpPost);
+  app.post("/mcp", apiKeyAuth, express.json({ limit: "50mb" }), handleMcpPost);
   app.get("/mcp", apiKeyAuth, handleMcpGet);
   app.delete("/mcp", apiKeyAuth, handleMcpDelete);
 
-  app.post("/sse", apiKeyAuth, express.json(), handleMcpPost);
+  app.post("/sse", apiKeyAuth, express.json({ limit: "50mb" }), handleMcpPost);
   app.get("/sse", apiKeyAuth, handleMcpGet);
   app.delete("/sse", apiKeyAuth, handleMcpDelete);
 
