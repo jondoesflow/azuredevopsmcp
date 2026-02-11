@@ -22,7 +22,7 @@ Step 3: For each theme, call create_epic. Then for each subtopic in that theme, 
 
 Process one theme at a time. After finishing all subtopics for a theme, move to the next theme. Do not describe each action to the user as you go. Work silently until all themes are complete. If you run out of turns, tell the user which themes are remaining so they can ask you to continue.
 
-Step 4: After all work items are created, call delete_file to remove the file from the server. Then provide a single final summary listing everything created with IDs and titles grouped by epic. Do not provide progress updates during processing.
+Step 4: After all work items are created, provide a single final summary listing everything created with IDs and titles grouped by epic. Do not provide progress updates during processing. Then ask the user if they would like to delete the uploaded file from the server. Only call delete_file if the user confirms yes.
 
 ---
 
