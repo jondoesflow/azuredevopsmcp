@@ -431,6 +431,24 @@ export const workItemTools: Tool[] = [
     },
   },
   {
+    name: "create_backlog",
+    description: "Creates a full backlog of Epics, Features, User Stories, and Tasks from a previously analysed document. Call analyse_document first. This creates all work items in one operation and returns a count summary.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        fileName: {
+          type: "string",
+          description: "Name of the uploaded file that was analysed.",
+        },
+        project: {
+          type: "string",
+          description: "Azure DevOps project name.",
+        },
+      },
+      required: ["fileName", "project"],
+    },
+  },
+  {
     name: "update_work_item",
     description: "Updates a work item.",
     inputSchema: {
@@ -1070,6 +1088,88 @@ export async function handleWorkItemTool(
           result: "success",
           theme: input.themeName,
           subtopics: theme.subtopics,
+        });
+      }
+
+      case "create_backlog": {
+        const backlogStore = getFileStore();
+        const backlogCached = backlogStore.get(`__analysis_${input.fileName}`);
+        if (!backlogCached) {
+          return JSON.stringify({ result: "error", message: "No analysis found. Call analyse_document first." });
+        }
+        const backlogThemes: Record<string, { mentions: number; subtopics: string[] }> = JSON.parse(backlogCached.content);
+        const project = input.project;
+
+        let epicCount = 0;
+        let featureCount = 0;
+        let storyCount = 0;
+        let taskCount = 0;
+
+        logger.info("Creating full backlog", { project, themes: Object.keys(backlogThemes).length });
+
+        for (const [themeName, themeData] of Object.entries(backlogThemes)) {
+          // Create Epic for the theme
+          const epic = await client.createWorkItem({
+            project,
+            witType: "Epic",
+            title: themeName,
+            description: `Epic for theme: ${themeName}`,
+          });
+          epicCount++;
+          logger.info("Created epic", { id: epic.id, title: themeName });
+
+          for (const subtopic of themeData.subtopics) {
+            // Create Feature for each subtopic
+            const feature = await client.createWorkItem({
+              project,
+              witType: "Feature",
+              title: subtopic,
+              description: `Feature under ${themeName}: ${subtopic}`,
+              parentId: epic.id,
+            });
+            featureCount++;
+
+            // Create a User Story for the feature
+            const storyTitle = `As a user, I want ${subtopic.toLowerCase()} so that the system supports ${themeName.toLowerCase()} requirements`;
+            const story = await client.createWorkItem({
+              project,
+              witType: "User Story",
+              title: storyTitle,
+              description: `User story for: ${subtopic}`,
+              parentId: feature.id,
+              acceptanceCriteria: [
+                `${subtopic} functionality is implemented and tested`,
+                `Acceptance criteria validated by stakeholders`,
+              ],
+            });
+            storyCount++;
+
+            // Create tasks for the user story
+            const taskTitles = [
+              `Analyse requirements for ${subtopic}`,
+              `Design and implement ${subtopic}`,
+              `Test and validate ${subtopic}`,
+            ];
+            for (const taskTitle of taskTitles) {
+              await client.createWorkItem({
+                project,
+                witType: "Task",
+                title: taskTitle,
+                parentId: story.id,
+              });
+              taskCount++;
+            }
+          }
+        }
+
+        logger.info("Backlog creation complete", { epicCount, featureCount, storyCount, taskCount });
+
+        return JSON.stringify({
+          result: "success",
+          epics: epicCount,
+          features: featureCount,
+          userStories: storyCount,
+          tasks: taskCount,
         });
       }
 
