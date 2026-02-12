@@ -225,6 +225,50 @@ async function startHttpServer() {
     }
   }
 
+  // Extract nested JSON content from Power Automate trigger body
+  function extractNestedContent(raw: string, fileName: string): string {
+    if (typeof raw !== "string" || !raw.trimStart().startsWith("{")) return raw;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed?.file?.Content) {
+        logger.info("Extracted Content from nested JSON", { fileName, extractedLength: parsed.file.Content.length });
+        return parsed.file.Content;
+      }
+      if (parsed?.file?.contentBytes) {
+        logger.info("Extracted contentBytes from nested JSON", { fileName, extractedLength: parsed.file.contentBytes.length });
+        return parsed.file.contentBytes;
+      }
+    } catch {
+      // Not JSON, continue with original content
+    }
+    return raw;
+  }
+
+  // Decode base64 or data URI content
+  function decodeUploadContent(raw: string, fileName: string): { content: string; error?: string } {
+    const dataUriMatch = raw.match(/^data:([^;]+);base64,(.+)$/s);
+    if (dataUriMatch) {
+      try {
+        const content = Buffer.from(dataUriMatch[2], "base64").toString("utf-8");
+        logger.info("Decoded data URI", { fileName, size: content.length });
+        return { content };
+      } catch {
+        return { content: raw, error: "Failed to decode base64 from data URI" };
+      }
+    }
+    try {
+      const stripped = raw.replaceAll(/\s+/g, "");
+      const decoded = Buffer.from(stripped, "base64").toString("utf-8");
+      if (decoded.length > 100 && decoded.length < stripped.length && !decoded.substring(0, 2000).includes("\ufffd")) {
+        logger.info("Decoded base64 content", { fileName, originalSize: raw.length, decodedSize: decoded.length });
+        return { content: decoded };
+      }
+    } catch {
+      // Not base64, use as-is
+    }
+    return { content: raw };
+  }
+
   // File upload endpoint (REST, not MCP) - accepts JSON body with fileName and fileContent
   app.post("/upload", apiKeyAuth, express.json({ limit: "50mb" }), (req: Request, res: Response) => {
     try {
@@ -235,49 +279,14 @@ async function startHttpServer() {
         return;
       }
 
-      let content = fileContent;
-      logger.info("Upload received", { fileName, contentLength: content.length, first50: content.substring(0, 50) });
+      logger.info("Upload received", { fileName, contentLength: fileContent.length, first50: fileContent.substring(0, 50) });
 
-      // Power Automate sends the entire trigger body as a JSON string: {"file":{"Content":"base64..."},"text":"filename"}
-      // Extract the actual base64 content from the nested structure
-      if (typeof content === "string" && content.trimStart().startsWith("{")) {
-        try {
-          const parsed = JSON.parse(content);
-          if (parsed?.file?.Content) {
-            content = parsed.file.Content;
-            logger.info("Extracted Content from nested JSON", { fileName, extractedLength: content.length });
-          } else if (parsed?.file?.contentBytes) {
-            content = parsed.file.contentBytes;
-            logger.info("Extracted contentBytes from nested JSON", { fileName, extractedLength: content.length });
-          }
-        } catch {
-          // Not JSON, continue with original content
-        }
-      }
+      const extracted = extractNestedContent(fileContent, fileName);
+      const { content, error } = decodeUploadContent(extracted, fileName);
 
-      // Handle data: URI
-      const dataUriMatch = content.match(/^data:([^;]+);base64,(.+)$/s);
-      if (dataUriMatch) {
-        try {
-          content = Buffer.from(dataUriMatch[2], "base64").toString("utf-8");
-          logger.info("Decoded data URI", { fileName, size: content.length });
-        } catch {
-          res.status(400).json({ error: "Failed to decode base64 from data URI" });
-          return;
-        }
-      }
-      // Try base64 decode
-      else {
-        try {
-          const stripped = content.replaceAll(/\s+/g, "");
-          const decoded = Buffer.from(stripped, "base64").toString("utf-8");
-          if (decoded.length > 100 && decoded.length < stripped.length && !decoded.substring(0, 2000).includes("\ufffd")) {
-            logger.info("Decoded base64 content", { fileName, originalSize: content.length, decodedSize: decoded.length });
-            content = decoded;
-          }
-        } catch {
-          // Not base64, use as-is
-        }
+      if (error) {
+        res.status(400).json({ error });
+        return;
       }
 
       const fileStore = getFileStore();
@@ -289,13 +298,7 @@ async function startHttpServer() {
       });
 
       logger.info("File uploaded via REST", { fileName, size: content.length });
-
-      res.json({
-        result: "success",
-        fileName,
-        size: content.length,
-        contentType: contentType || "text/plain",
-      });
+      res.json({ result: "success", fileName, size: content.length, contentType: contentType || "text/plain" });
     } catch (error) {
       logger.error("Error handling file upload", error);
       res.status(500).json({ error: "Upload failed" });

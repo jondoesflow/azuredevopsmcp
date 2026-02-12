@@ -506,59 +506,60 @@ interface ToolInput {
 
 // --- Extracted handlers to reduce cognitive complexity of handleWorkItemTool ---
 
+function tryDecodeBase64(raw: string): string {
+  const stripped = raw.replaceAll(/\s/g, "");
+  if (!/^[A-Za-z0-9+/=]+$/.test(stripped) || raw.length <= 100) return raw;
+  try {
+    const decoded = Buffer.from(stripped, "base64").toString("utf-8");
+    return (decoded && !decoded.includes("\ufffd")) ? decoded : raw;
+  } catch {
+    return raw;
+  }
+}
+
+async function resolveContentUrl(url: string, fileName: string): Promise<{ content: string; contentType: string } | string> {
+  const dataUriRegex = /^data:([^;]+);base64,(.+)$/;
+  const dataUriMatch = dataUriRegex.exec(url);
+  if (dataUriMatch) {
+    try {
+      const content = Buffer.from(dataUriMatch[2], "base64").toString("utf-8");
+      logger.info("Decoded content from data URI", { fileName, contentType: dataUriMatch[1], size: content.length });
+      return { content, contentType: dataUriMatch[1] };
+    } catch {
+      return JSON.stringify({ result: "error", message: "Failed to decode base64 from contentUrl" });
+    }
+  }
+  if (url.startsWith("http")) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return JSON.stringify({ result: "error", message: "Failed to fetch file from URL: " + response.status });
+      const content = await response.text();
+      logger.info("Fetched content from URL", { fileName, size: content.length });
+      return { content, contentType: "text/plain" };
+    } catch (err: any) {
+      return JSON.stringify({ result: "error", message: "Failed to fetch file from URL: " + err.message });
+    }
+  }
+  return JSON.stringify({ result: "error", message: "contentUrl must be a data: URI or http(s) URL" });
+}
+
 async function handleProcessTranscript(input: ToolInput, fileStore: ReturnType<typeof getFileStore>): Promise<string> {
   const fileName = input.fileName!;
   let content = "";
   let contentType = input.contentType || "text/plain";
 
   if (input.contentUrl) {
-    const dataUriRegex = /^data:([^;]+);base64,(.+)$/;
-    const dataUriMatch = dataUriRegex.exec(input.contentUrl);
-    if (dataUriMatch) {
-      contentType = dataUriMatch[1];
-      try {
-        content = Buffer.from(dataUriMatch[2], "base64").toString("utf-8");
-        logger.info("Decoded content from data URI", { fileName, contentType, size: content.length });
-      } catch {
-        return JSON.stringify({ result: "error", message: "Failed to decode base64 from contentUrl" });
-      }
-    } else if (input.contentUrl.startsWith("http")) {
-      try {
-        const response = await fetch(input.contentUrl);
-        if (!response.ok) {
-          return JSON.stringify({ result: "error", message: "Failed to fetch file from URL: " + response.status });
-        }
-        content = await response.text();
-        logger.info("Fetched content from URL", { fileName, size: content.length });
-      } catch (err: any) {
-        return JSON.stringify({ result: "error", message: "Failed to fetch file from URL: " + err.message });
-      }
-    } else {
-      return JSON.stringify({ result: "error", message: "contentUrl must be a data: URI or http(s) URL" });
-    }
+    const resolved = await resolveContentUrl(input.contentUrl, fileName);
+    if (typeof resolved === "string") return resolved;
+    content = resolved.content;
+    contentType = resolved.contentType;
   } else if (input.fileContent) {
-    content = input.fileContent;
-    if (/^[A-Za-z0-9+/=]+$/.test(content.replaceAll(/\s/g, "")) && content.length > 100) {
-      try {
-        const decoded = Buffer.from(content, "base64").toString("utf-8");
-        if (decoded && !decoded.includes("\ufffd")) {
-          content = decoded;
-        }
-      } catch {
-        // Not base64, use as-is
-      }
-    }
+    content = tryDecodeBase64(input.fileContent);
   } else {
     const existing = fileStore.get(fileName);
     if (existing) {
       logger.info("No content provided but file already exists on server", { fileName, size: existing.content.length });
-      return JSON.stringify({
-        result: "success",
-        fileName,
-        size: existing.content.length,
-        contentType: existing.mimeType,
-        message: "File already exists on server. Use get_file_content or analyse_document to read it.",
-      });
+      return JSON.stringify({ result: "success", fileName, size: existing.content.length, contentType: existing.mimeType, message: "File already exists on server. Use get_file_content or analyse_document to read it." });
     }
     return JSON.stringify({ result: "error", message: "Provide either fileContent or contentUrl" });
   }
@@ -566,13 +567,7 @@ async function handleProcessTranscript(input: ToolInput, fileStore: ReturnType<t
   const existingFile = fileStore.get(fileName);
   if (existingFile && existingFile.content.length > content.length && content.length < 100) {
     logger.info("Skipping overwrite - existing file is larger", { fileName, existingSize: existingFile.content.length, newSize: content.length });
-    return JSON.stringify({
-      result: "success",
-      fileName,
-      size: existingFile.content.length,
-      contentType: existingFile.mimeType,
-      message: "File already exists with more content. Use get_file_content or analyse_document to read it.",
-    });
+    return JSON.stringify({ result: "success", fileName, size: existingFile.content.length, contentType: existingFile.mimeType, message: "File already exists with more content. Use get_file_content or analyse_document to read it." });
   }
 
   fileStore.set(fileName, { name: fileName, content, mimeType: contentType, uploadedAt: new Date() });
@@ -707,6 +702,19 @@ const THEME_CONFIG: Record<string, { keywords: string[]; subtopicLabels: Record<
   },
 };
 
+function scanSectionForThemes(sectionText: string, themeDetails: Record<string, { mentions: number; subtopics: string[] }>): void {
+  for (const [theme, cfg] of Object.entries(THEME_CONFIG)) {
+    if (!cfg.keywords.some(kw => sectionText.includes(kw))) continue;
+    if (!themeDetails[theme]) themeDetails[theme] = { mentions: 0, subtopics: [] };
+    themeDetails[theme].mentions++;
+    for (const [label, labelKeywords] of Object.entries(cfg.subtopicLabels)) {
+      if (labelKeywords.some(kw => sectionText.includes(kw)) && !themeDetails[theme].subtopics.includes(label)) {
+        themeDetails[theme].subtopics.push(label);
+      }
+    }
+  }
+}
+
 function handleAnalyseDocument(input: ToolInput): string {
   const fileStore = getFileStore();
   const file = fileStore.get(input.fileName!);
@@ -722,17 +730,7 @@ function handleAnalyseDocument(input: ToolInput): string {
   const themeDetails: Record<string, { mentions: number; subtopics: string[] }> = {};
   for (let i = 0; i < totalLines; i += SECTION_SIZE) {
     const sectionText = lines.slice(i, i + SECTION_SIZE).join(" ").toLowerCase();
-    for (const [theme, cfg] of Object.entries(THEME_CONFIG)) {
-      if (cfg.keywords.some(kw => sectionText.includes(kw))) {
-        if (!themeDetails[theme]) themeDetails[theme] = { mentions: 0, subtopics: [] };
-        themeDetails[theme].mentions++;
-        for (const [label, labelKeywords] of Object.entries(cfg.subtopicLabels)) {
-          if (labelKeywords.some(kw => sectionText.includes(kw)) && !themeDetails[theme].subtopics.includes(label)) {
-            themeDetails[theme].subtopics.push(label);
-          }
-        }
-      }
-    }
+    scanSectionForThemes(sectionText, themeDetails);
   }
 
   const finalThemes: Record<string, { mentions: number; subtopics: string[] }> = {};
