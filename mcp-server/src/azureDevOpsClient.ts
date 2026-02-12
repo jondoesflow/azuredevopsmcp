@@ -33,7 +33,7 @@ export interface WorkItemUpdate {
 }
 
 export class AzureDevOpsClient {
-  private webApi: WebApi;
+  private readonly webApi: WebApi;
   private witApi: IWorkItemTrackingApi | null = null;
 
   constructor(config: Config) {

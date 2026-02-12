@@ -9,7 +9,7 @@ import { logger } from "./logger.js";
 import { AzureDevOpsClient } from "./azureDevOpsClient.js";
 import { workItemTools, handleWorkItemTool, getFileStore } from "./tools/workItems.js";
 
-const PORT = parseInt(process.env.PORT || "80", 10);
+const PORT = Number.parseInt(process.env.PORT || "80", 10);
 const TRANSPORT_MODE = process.env.TRANSPORT_MODE || "http"; // "http" or "stdio"
 const API_KEY = process.env.MCP_API_KEY || "";
 
@@ -269,7 +269,7 @@ async function startHttpServer() {
       // Try base64 decode
       else {
         try {
-          const stripped = content.replace(/[\s\r\n]+/g, "");
+          const stripped = content.replaceAll(/\s+/g, "");
           const decoded = Buffer.from(stripped, "base64").toString("utf-8");
           if (decoded.length > 100 && decoded.length < stripped.length && !decoded.substring(0, 2000).includes("\ufffd")) {
             logger.info("Decoded base64 content", { fileName, originalSize: content.length, decodedSize: decoded.length });
@@ -350,26 +350,6 @@ async function startStdioServer() {
   logger.info("Azure DevOps MCP Server started (stdio mode)");
 }
 
-// Main entry point
-async function main() {
-  logger.info("Server initializing", {
-    serverName: "mcp-azure-devops-server",
-    toolCount: workItemTools.length,
-    transport: TRANSPORT_MODE,
-  });
-
-  try {
-    if (TRANSPORT_MODE === "stdio") {
-      await startStdioServer();
-    } else {
-      await startHttpServer();
-    }
-  } catch (error) {
-    logger.error("Fatal error during startup", error);
-    process.exit(1);
-  }
-}
-
 // Handle graceful shutdown
 process.on("SIGINT", async () => {
   logger.info("Server shutting down");
@@ -390,4 +370,20 @@ process.on("unhandledRejection", (reason) => {
   logger.error("Unhandled rejection", reason);
 });
 
-main();
+// Top-level await entry point
+logger.info("Server initializing", {
+  serverName: "mcp-azure-devops-server",
+  toolCount: workItemTools.length,
+  transport: TRANSPORT_MODE,
+});
+
+try {
+  if (TRANSPORT_MODE === "stdio") {
+    await startStdioServer();
+  } else {
+    await startHttpServer();
+  }
+} catch (error) {
+  logger.error("Fatal error during startup", error);
+  process.exit(1);
+}

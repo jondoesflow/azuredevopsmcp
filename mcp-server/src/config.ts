@@ -1,6 +1,6 @@
-import * as fs from "fs";
-import * as path from "path";
-import { fileURLToPath } from "url";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,7 +18,7 @@ function loadEnvFile(): void {
     const lines = envContent.split("\n");
     for (const line of lines) {
       const [key, ...valueParts] = line.split("=");
-      if (key && key.trim() && !key.startsWith("#")) {
+      if (key?.trim() && !key.startsWith("#")) {
         const value = valueParts.join("=").trim();
         process.env[key.trim()] = value;
       }

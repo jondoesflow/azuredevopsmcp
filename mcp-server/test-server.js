@@ -5,9 +5,9 @@
  * Sends a tools/list request to verify the server is working
  */
 
-import { spawn } from "child_process";
-import * as path from "path";
-import { fileURLToPath } from "url";
+import { spawn } from "node:child_process";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -67,13 +67,12 @@ async function testServer() {
   });
 }
 
-testServer()
-  .then((result) => {
-    console.log("\n✓ Server test completed successfully!");
-    console.log("Server logs captured - server is operational.");
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.error("\n✗ Server test failed:", error);
-    process.exit(1);
-  });
+try {
+  await testServer();
+  console.log("\n✓ Server test completed successfully!");
+  console.log("Server logs captured - server is operational.");
+  process.exit(0);
+} catch (error) {
+  console.error("\n✗ Server test failed:", error);
+  process.exit(1);
+}
