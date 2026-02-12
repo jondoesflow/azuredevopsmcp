@@ -1130,17 +1130,29 @@ export async function handleWorkItemTool(
             featureCount++;
 
             // Create a User Story for the feature
-            const storyTitle = `As a user, I want ${subtopic.toLowerCase()} so that the system supports ${themeName.toLowerCase()} requirements`;
+            // Title: short summary. Description: user story format + MoSCoW. Acceptance criteria: Gherkin.
+            const storyTitle = `${subtopic}`;
+            const storyDescription = [
+              `<strong>User Story</strong><br/>`,
+              `As a user, I want ${subtopic.toLowerCase()} so that the system supports ${themeName.toLowerCase()} requirements.`,
+              `<br/><br/><strong>MoSCoW Priority</strong><br/>`,
+              `Must Have`,
+              `<br/><br/><strong>Theme</strong><br/>`,
+              `${themeName}`,
+            ].join("");
+            const gherkinCriteria = [
+              `Given the ${themeName.toLowerCase()} module is available`,
+              `When a user interacts with ${subtopic.toLowerCase()}`,
+              `Then the system should process the request successfully`,
+              `And the result should be visible to the user`,
+            ];
             const story = await client.createWorkItem({
               project,
               witType: "User Story",
               title: storyTitle,
-              description: `User story for: ${subtopic}`,
+              description: storyDescription,
               parentId: feature.id,
-              acceptanceCriteria: [
-                `${subtopic} functionality is implemented and tested`,
-                `Acceptance criteria validated by stakeholders`,
-              ],
+              acceptanceCriteria: gherkinCriteria,
             });
             storyCount++;
 

@@ -147,7 +147,8 @@ Expected health response:
   "server": "mcp-azure-devops-server",
   "version": "1.0.0",
   "transport": "streamable-http",
-  "tools": 11
+  "authEnabled": true,
+  "tools": 19
 }
 ```
 
@@ -157,9 +158,9 @@ Expected health response:
 
 1. In Copilot Studio, go to your agent's **Tools** section
 2. Add a new **MCP** tool
-3. Set the URL to: `http://<your-dns-label>.<region>.azurecontainer.io/sse`
-4. Authentication: **None** (or API key if enabled - see below)
-5. Test the connection - it should discover 14 tools
+3. Set the URL to: `http://<your-dns-label>.<region>.azurecontainer.io/mcp`
+4. Authentication: **API Key** — Header name: `apikey`, value: your MCP API key
+5. Test the connection - it should discover 19 tools
 
 ### Copilot Studio Agent Instructions
 
@@ -280,7 +281,7 @@ az container delete -g mcp-server-rg -n mcp-azure-devops --yes
 
 ---
 
-## Available Tools (14)
+## Available Tools (19)
 
 | Tool | Description |
 |------|-------------|
@@ -297,7 +298,12 @@ az container delete -g mcp-server-rg -n mcp-azure-devops --yes
 | `update_work_item` | Updates a work item |
 | `process_transcript` | Accepts uploaded file content (text or base64) for processing |
 | `list_uploaded_files` | Returns list of uploaded files |
+| `delete_file` | Deletes an uploaded file from the server |
 | `get_file_content` | Returns content of an uploaded file |
+| `get_file_chunk` | Returns a specific chunk of a large file |
+| `analyse_document` | Analyses document server-side, extracts themes |
+| `get_theme_details` | Returns subtopics for a specific theme |
+| `create_backlog` | Creates full backlog (epics/features/stories/tasks) from analysis |
 
 ---
 

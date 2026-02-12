@@ -1,200 +1,106 @@
 # Azure DevOps MCP Server
 
-An MCP (Model Context Protocol) server that integrates with Azure DevOps, enabling Copilot Studio agents to manage work items in your Azure DevOps organization.
+An MCP (Model Context Protocol) server that integrates with Azure DevOps, enabling Copilot Studio agents to manage work items and automatically create backlogs from business documents.
 
 ## Features
 
-- **HTTP/SSE Transport**: Ready for Copilot Studio integration over HTTP
-- **Epics**: List and create Epic work items for strategic planning
-- **Features**: Organize work into Features under Epics
-- **User Stories**: Manage User Stories with detailed acceptance criteria
-- **Tasks**: Create and track Tasks for User Story implementation
-- **Acceptance Criteria**: Add and manage acceptance criteria on User Stories
-- **Work Item Management**: Update states, assignments, and descriptions
-- **Real Azure DevOps Integration**: Actual API calls to Azure DevOps REST API
-- **Error Handling & Logging**: Comprehensive logging and error handling
+- **19 MCP tools** — Work item CRUD, document analysis, and automated backlog creation
+- **Automated backlog creation** — Upload a document → analyse into themes → create full hierarchy in one call
+- **Gherkin acceptance criteria** — User stories include Given/When/Then format
+- **MoSCoW prioritisation** — User story descriptions include priority ratings
+- **File upload pipeline** — Copilot Studio → Power Automate → MCP server with automatic base64 decoding
+- **Streamable HTTP transport** — Compatible with Copilot Studio MCP connector
+- **API key authentication** — Secure endpoint for production use
+- **Docker containerized** — Deploy to Azure Container Instances (~$6/month)
 
-## Quick Start - Deploy to Azure
+## Documentation
 
-### Prerequisites
+| Guide | Description |
+|-------|-------------|
+| [SETUP-GUIDE.md](SETUP-GUIDE.md) | **Start here** — Complete end-to-end setup from scratch |
+| [AZURE-DEPLOYMENT.md](AZURE-DEPLOYMENT.md) | Azure infrastructure deployment reference |
+| [COPILOT-STUDIO-PROMPT.md](COPILOT-STUDIO-PROMPT.md) | Agent instructions, Topic setup, and Power Automate flow |
 
-1. **Azure CLI** - [Install](https://aka.ms/installazurecliwindows)
-2. **Docker Desktop** - [Install](https://www.docker.com/products/docker-desktop)
-3. **Azure Subscription** - With Contributor access
-4. **Azure DevOps PAT** - With Work Items (Read & Write) scope
+## Quick Start
 
-### One-Command Deployment
-
-```powershell
-cd mcp-server
-.\setup-deploy.ps1
+```bash
+npm install
+cp .env.example .env
+# Edit .env with your Azure DevOps credentials
+npm run build
+npm start
 ```
 
-This interactive script will:
-- Verify prerequisites (Azure CLI, Docker)
-- Log you into Azure
-- Collect deployment parameters
-- Deploy to Azure Container Instances
+Test: `curl http://localhost:3000/health`
 
-**Estimated time: 5-10 minutes**
-
-### Manual Deployment
-
-```powershell
-.\deploy.ps1 `
-    -SubscriptionId "your-subscription-id" `
-    -RegistryName "mcpregistry12345" `
-    -Location "eastus" `
-    -AzureDevOpsOrg "your-ado-org" `
-    -AzureDevOpsPat "your-pat-token" `
-    -AzureDevOpsUrl "https://dev.azure.com/your-ado-org"
-```
-
----
-
-## Architecture
-
-```
-src/
-├── index.ts                 # Main server entry point (HTTP + stdio transport)
-├── config.ts               # Configuration management
-├── logger.ts               # Logging utilities
-├── azureDevOpsClient.ts   # Azure DevOps API client
-└── tools/
-    └── workItems.ts        # Work item tools & handlers
-```
-
-### Server Endpoints (HTTP Mode)
+## Server Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/health` | GET | Health check (returns server status) |
-| `/sse` | GET | SSE connection for MCP clients |
-| `/messages` | POST | Message endpoint for MCP requests |
+| `/health` | GET | Health check — returns server status and tool count |
+| `/mcp` | POST | Streamable HTTP MCP endpoint |
+| `/sse` | POST | MCP endpoint (Copilot Studio compatibility) |
+| `/upload` | POST | REST file upload (JSON: fileName, fileContent, contentType) |
+| `/files` | GET | List uploaded files |
 
----
+## Available Tools (19)
 
-## Configuration
+### Work Item Management
+| Tool | Description |
+|------|-------------|
+| `list_epics` | Returns epics from a project |
+| `list_features` | Returns features from a project |
+| `list_user_stories` | Returns user stories from a project |
+| `get_user_story` | Returns user story details with tasks |
+| `add_acceptance_criteria` | Adds acceptance criteria to a user story |
+| `list_tasks` | Returns tasks from a project |
+| `create_epic` | Creates an epic |
+| `create_feature` | Creates a feature linked to an epic |
+| `create_user_story` | Creates a user story linked to a feature |
+| `create_task` | Creates a task linked to a user story |
+| `update_work_item` | Updates state, assignment, or description |
 
-### Environment Variables
+### Document Processing
+| Tool | Description |
+|------|-------------|
+| `process_transcript` | Stores file content on the server |
+| `list_uploaded_files` | Returns list of uploaded files |
+| `delete_file` | Deletes an uploaded file |
+| `get_file_content` | Returns file metadata and chunk info |
+| `get_file_chunk` | Returns a specific chunk of a large file |
+| `analyse_document` | Analyses document server-side, extracts themes |
+| `get_theme_details` | Returns subtopics for a specific theme |
+| `create_backlog` | Creates full backlog from analysed document |
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `AZURE_DEVOPS_ORG` | Yes | - | Azure DevOps organization name |
-| `AZURE_DEVOPS_PAT` | Yes | - | Personal Access Token |
-| `AZURE_DEVOPS_URL` | Yes | - | Full Azure DevOps URL |
-| `PORT` | No | `8080` | HTTP server port |
-| `TRANSPORT_MODE` | No | `http` | `http` for Copilot Studio, `stdio` for CLI |
+## Work Item Format
 
-### Local Development
+The `create_backlog` tool creates:
+- **Epic** — One per theme, title is the theme name
+- **Feature** — One per subtopic, linked to epic
+- **User Story** — Short title, description with "As a... I want... so that..." + MoSCoW priority
+- **Acceptance Criteria** — Gherkin format (Given/When/Then/And)
+- **Tasks** — 3 per story (Analyse / Design & implement / Test & validate)
 
-1. Copy `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
-   ```
+## Environment Variables
 
-2. Edit `.env` with your Azure DevOps credentials
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `AZURE_DEVOPS_ORG` | Yes | Azure DevOps organization name |
+| `AZURE_DEVOPS_PAT` | Yes | Personal Access Token (Work Items Read & Write) |
+| `AZURE_DEVOPS_URL` | Yes | e.g. `https://dev.azure.com/myorg` |
+| `PORT` | No | Server port (default: `80`) |
+| `TRANSPORT_MODE` | No | `http` or `stdio` (default: `http`) |
+| `MCP_API_KEY` | No | API key for authentication |
 
-3. Install and build:
-   ```bash
-   npm install
-   npm run build
-   ```
+## Security
 
-4. Run locally:
-   ```bash
-   npm start
-   ```
+- Never commit `.env` files with real credentials
+- Restrict PAT scopes to minimum required permissions
+- Rotate PATs regularly
+- Enable API key authentication for production
 
-5. Test the health endpoint:
-   ```bash
-   curl http://localhost:8080/health
-   ```
-
----
-
-## Generate a Personal Access Token
-
-1. Go to `https://dev.azure.com/<your-org>/_usersSettings/tokens`
-2. Click **New Token**
-3. Configure:
-   - **Name**: "MCP Server"
-   - **Scopes**: Work Items (Read & Write)
-   - **Expiration**: Set appropriate duration
-4. Copy the token immediately and save securely
-
----
-
-## Connecting to Copilot Studio
-
-After deployment completes, you'll receive a public IP address.
-
-1. **Get the server URL**: `http://<container-ip>:8080`
-
-2. **In Copilot Studio**, configure the MCP connector:
-   - **Server URL**: `http://<container-ip>:8080/sse`
-   - **Transport**: SSE (Server-Sent Events)
-
-3. The following tools will be available to your agent:
-   - `list_epics`, `create_epic`
-   - `list_features`, `create_feature`
-   - `list_user_stories`, `create_user_story`, `get_user_story`
-   - `list_tasks`, `create_task`
-   - `add_acceptance_criteria`
-   - `update_work_item`
-
----
-
-## Managing the Deployment
-
-### View Logs
-```bash
-az container logs -g mcp-server-rg -n mcp-azure-devops --tail 50
-```
-
-### Restart Container
-```bash
-az container restart -g mcp-server-rg -n mcp-azure-devops
-```
-
-### Delete Everything
-```bash
-az group delete -g mcp-server-rg --yes
-```
-
----
-
-## Estimated Costs
-
-| Resource | Monthly Cost |
-|----------|--------------|
-| Azure Container Instances | ~$1/month |
-| Azure Container Registry (Basic) | ~$5/month |
-| **Total** | **~$6/month** |
-
-## Available MCP Tools
-
-- `list_epics` - Query Epics with filters
-- `list_features` - List Features by Epic or state
-- `list_user_stories` - Query User Stories with filters
-- `get_user_story` - Get detailed User Story info including acceptance criteria
-- `add_acceptance_criteria` - Add acceptance criteria to a User Story
-- `list_tasks` - List Tasks by User Story or state
-- `create_epic` - Create a new Epic
-- `create_feature` - Create a new Feature
-- `create_user_story` - Create a new User Story with acceptance criteria
-- `create_task` - Create a new Task
-- `update_work_item` - Update work item state, assignment, or description
-
-## Documentation
+## References
 
 - [MCP Specification](https://modelcontextprotocol.io/specification)
 - [Azure DevOps REST API](https://learn.microsoft.com/en-us/rest/api/azure/devops)
 - [Azure DevOps Node SDK](https://github.com/microsoft/azure-devops-node-api)
-
-## Security Notes
-
-- Never commit `.env` files with real credentials
-- Use Azure Key Vault for production deployments
-- Restrict PAT scopes to minimum required permissions
-- Rotate PATs regularly

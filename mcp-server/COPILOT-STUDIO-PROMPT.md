@@ -127,8 +127,40 @@ Then tell the agent: "The file [name] is already uploaded. Analyse it and create
 3. **Cleanup**: Agent calls `delete_file` to remove the file after work items are created
 4. **Container restart**: All files are automatically cleared (in-memory only)
 
+## Work Item Format
+
+The `create_backlog` tool creates work items with the following structure:
+
+### Epics
+- **Title**: Theme name (e.g., "ERP Integration")
+- **Description**: Epic description referencing the theme
+
+### Features
+- **Title**: Subtopic name (e.g., "Oracle ERP integration")
+- **Description**: Feature description referencing the parent theme
+- **Parent**: Linked to the Epic
+
+### User Stories
+- **Title**: Short summary (subtopic name)
+- **Description** contains:
+  - **User Story**: "As a user, I want [subtopic] so that the system supports [theme] requirements."
+  - **MoSCoW Priority**: Must Have (default)
+  - **Theme**: Parent theme name
+- **Acceptance Criteria** in Gherkin format:
+  - Given the [theme] module is available
+  - When a user interacts with [subtopic]
+  - Then the system should process the request successfully
+  - And the result should be visible to the user
+- **Parent**: Linked to the Feature
+
+### Tasks
+- **Title**: Action-oriented (Analyse / Design and implement / Test and validate)
+- **Parent**: Linked to the User Story
+- 3 tasks per user story
+
 ## Notes
 
 - Files are stored in server memory and persist until deleted or the container restarts.
-- The agent creates work items top-down: Epics → Features → User Stories → Tasks.
-- The `analyse_document` tool does server-side text analysis for files over 100K characters, extracting themes and requirements without needing the LLM to read the full content.
+- The `create_backlog` tool creates all work items server-side in one operation: Epics → Features → User Stories → Tasks.
+- The `analyse_document` tool does server-side text analysis, extracting themes and requirements without needing the LLM to read the full content.
+- All user stories default to MoSCoW "Must Have" — adjust priorities in Azure DevOps after creation.
