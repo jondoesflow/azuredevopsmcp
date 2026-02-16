@@ -18,7 +18,6 @@ This guide walks you through building and deploying the MCP Azure DevOps Server 
 10. [Test the Full Pipeline](#10-test-the-full-pipeline)
 11. [Updating the Server](#11-updating-the-server)
 12. [Troubleshooting](#12-troubleshooting)
-13. [SonarQube Remediation Workflow (Mandatory)](#13-sonarqube-remediation-workflow-mandatory)
 
 ---
 
@@ -538,21 +537,6 @@ az container create `
 - Verify the PAT hasn't expired
 - Ensure the PAT has **Work Items (Read & Write)** scope
 - Check the organization name matches exactly (case-sensitive)
-
----
-
-## 13. SonarQube Remediation Workflow (Mandatory)
-
-Whenever SonarQube issues are being fixed for this repository, use this process:
-
-1. Create a GitHub issue first with detailed evidence:
-   - Severity, Sonar rule key, message, affected files and line references, and impact.
-2. Create a development branch for that issue.
-3. Implement fixes on that branch.
-4. Open a pull request targeting `dev`.
-5. Wait for human code review and approval before merge.
-
-Reference: [SONARQUBE-REMEDIATION-WORKFLOW.md](SONARQUBE-REMEDIATION-WORKFLOW.md)
 
 ---
 

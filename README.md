@@ -19,7 +19,7 @@ A Model Context Protocol (MCP) server that integrates with Azure DevOps to manag
 |-------|-------------|
 | [SETUP-GUIDE.md](mcp-server/SETUP-GUIDE.md) | **Start here** — Complete end-to-end setup from scratch |
 | [AZURE-DEPLOYMENT.md](mcp-server/AZURE-DEPLOYMENT.md) | Azure infrastructure deployment reference |
-| [COPILOT-STUDIO-PROMPT.md](mcp-server/COPILOT-STUDIO-PROMPT.md) | Agent instructions, Topic setup, and Power Automate flow |
+| [changelog.md](changelog.md) | High-level running log of MCP server and deployment changes |
 
 ## Quick Start (Local Development)
 
@@ -42,7 +42,6 @@ See [SETUP-GUIDE.md](mcp-server/SETUP-GUIDE.md) for the full walkthrough, or [AZ
 3. Deploy to Azure Container Instances (port 80, public DNS)
 4. Connect Copilot Studio MCP connector to `http://<your-dns>.azurecontainer.io/mcp`
 5. Create Copilot Studio Topic + Power Automate flow for file uploads
-6. Paste agent instructions from `COPILOT-STUDIO-PROMPT.md`
 
 ## Available Tools (19)
 
@@ -116,7 +115,7 @@ mcp-server/
   Dockerfile              # Multi-stage Docker build
   SETUP-GUIDE.md          # Complete end-to-end setup guide
   AZURE-DEPLOYMENT.md     # Azure infrastructure deployment reference
-  COPILOT-STUDIO-PROMPT.md # Agent instructions and Topic/Flow setup
+  ../changelog.md          # High-level running change log
 ```
 
 ## License
