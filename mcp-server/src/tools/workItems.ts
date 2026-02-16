@@ -482,6 +482,7 @@ export const workItemTools: Tool[] = [
 
 interface ToolInput {
   project: string;
+  iterationPath?: string;
   state?: string;
   assignedTo?: string;
   epic?: number;
@@ -765,6 +766,17 @@ function handleGetThemeDetails(input: ToolInput): string {
   return JSON.stringify({ result: "success", theme: input.themeName, subtopics: theme.subtopics });
 }
 
+function findWorkItemByTitle(
+  items: Array<{ id?: number; fields?: { [key: string]: unknown } }>,
+  title: string
+): { id?: number; fields?: { [key: string]: unknown } } | undefined {
+  const target = title.trim().toLowerCase();
+  return items.find((item) => {
+    const itemTitle = item.fields?.["System.Title"];
+    return typeof itemTitle === "string" && itemTitle.trim().toLowerCase() === target;
+  });
+}
+
 async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput): Promise<string> {
   const backlogStore = getFileStore();
   const backlogCached = backlogStore.get(`__analysis_${input.fileName}`);
@@ -773,6 +785,7 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
   }
   const backlogThemes: Record<string, { mentions: number; subtopics: string[] }> = JSON.parse(backlogCached.content);
   const project = input.project;
+  const iterationPath = input.iterationPath || `${project}\\Route`;
 
   let epicCount = 0;
   let featureCount = 0;
@@ -781,27 +794,59 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
 
   logger.info("Creating full backlog", { project, themes: Object.keys(backlogThemes).length });
 
+  const existingEpics = await client.listWorkItems({ project, witType: "Epic", top: 1000 });
+
   for (const [themeName, themeData] of Object.entries(backlogThemes)) {
+    const uniqueSubtopics = Array.from(new Set(themeData.subtopics));
+
     // Epic description summarizes its features
-    const featureListHtml = themeData.subtopics.map((s) => `<li>${s}</li>`).join("");
+    const featureListHtml = uniqueSubtopics.map((s) => `<li>${s}</li>`).join("");
     const epicDescription = [
       `<strong>${themeName}</strong><br/><br/>`,
       `This epic covers the following features:<br/>`,
       `<ul>${featureListHtml}</ul>`,
     ].join("");
-    const epic = await client.createWorkItem({ project, witType: "Epic", title: themeName, description: epicDescription });
-    epicCount++;
-    logger.info("Created epic", { id: epic.id, title: themeName });
+    let epic = findWorkItemByTitle(existingEpics, themeName);
+    if (!epic) {
+      epic = await client.createWorkItem({
+        project,
+        witType: "Epic",
+        title: themeName,
+        description: epicDescription,
+        iterationPath,
+      });
+      existingEpics.unshift(epic);
+      epicCount++;
+      logger.info("Created epic", { id: epic.id, title: themeName });
+    } else {
+      logger.info("Reusing existing epic", { id: epic.id, title: themeName });
+    }
 
-    for (const subtopic of themeData.subtopics) {
+    for (const subtopic of uniqueSubtopics) {
+      const existingFeatures = await client.listWorkItems({ project, witType: "Feature", parentId: epic.id!, top: 1000 });
+
       // Feature description summarizes its user stories
       const featureDescription = [
         `<strong>${subtopic}</strong> — part of ${themeName}<br/><br/>`,
         `This feature includes the following user story:<br/>`,
         `<ul><li>Implement ${subtopic.toLowerCase()} capability to support ${themeName.toLowerCase()} requirements</li></ul>`,
       ].join("");
-      const feature = await client.createWorkItem({ project, witType: "Feature", title: subtopic, description: featureDescription, parentId: epic.id });
-      featureCount++;
+      let feature = findWorkItemByTitle(existingFeatures, subtopic);
+      if (!feature) {
+        feature = await client.createWorkItem({
+          project,
+          witType: "Feature",
+          title: subtopic,
+          description: featureDescription,
+          parentId: epic.id,
+          iterationPath,
+        });
+        featureCount++;
+      } else {
+        logger.info("Reusing existing feature", { id: feature.id, title: subtopic, parentEpicId: epic.id });
+      }
+
+      const existingStories = await client.listWorkItems({ project, witType: "User Story", parentId: feature.id!, top: 1000 });
 
       // User story title must differ from feature title
       const storyTitle = `Implement ${subtopic}`;
@@ -816,15 +861,39 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
         `Then the system should process the request successfully`,
         `And the result should be visible to the user`,
       ];
-      const story = await client.createWorkItem({
-        project, witType: "User Story", title: storyTitle, description: storyDescription,
-        parentId: feature.id, acceptanceCriteria: gherkinCriteria, moscow: "Must",
-      });
-      storyCount++;
+      let story = findWorkItemByTitle(existingStories, storyTitle);
+      if (!story) {
+        story = await client.createWorkItem({
+          project,
+          witType: "User Story",
+          title: storyTitle,
+          description: storyDescription,
+          parentId: feature.id,
+          acceptanceCriteria: gherkinCriteria,
+          moscow: "Must",
+          iterationPath,
+        });
+        storyCount++;
+      } else {
+        logger.info("Reusing existing user story", { id: story.id, title: storyTitle, parentFeatureId: feature.id });
+      }
 
       const taskTitles = [`Analyse requirements for ${subtopic}`, `Design and implement ${subtopic}`, `Test and validate ${subtopic}`];
+      const existingTasks = await client.listWorkItems({ project, witType: "Task", parentId: story.id!, top: 1000 });
       for (const taskTitle of taskTitles) {
-        await client.createWorkItem({ project, witType: "Task", title: taskTitle, parentId: story.id });
+        const existingTask = findWorkItemByTitle(existingTasks, taskTitle);
+        if (existingTask) {
+          logger.info("Reusing existing task", { id: existingTask.id, title: taskTitle, parentStoryId: story.id });
+          continue;
+        }
+
+        await client.createWorkItem({
+          project,
+          witType: "Task",
+          title: taskTitle,
+          parentId: story.id,
+          iterationPath,
+        });
         taskCount++;
       }
     }

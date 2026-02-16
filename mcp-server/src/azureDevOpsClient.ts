@@ -9,6 +9,7 @@ export interface WorkItemInput {
   witType: string;
   title: string;
   description?: string;
+  iterationPath?: string;
   state?: string;
   assignedTo?: string;
   parentId?: number;
@@ -74,6 +75,14 @@ export class AzureDevOpsClient {
           op: "add",
           path: "/fields/System.Description",
           value: input.description,
+        });
+      }
+
+      if (input.iterationPath) {
+        patchDocument.push({
+          op: "add",
+          path: "/fields/System.IterationPath",
+          value: input.iterationPath,
         });
       }
 
