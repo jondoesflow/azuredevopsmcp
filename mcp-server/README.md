@@ -20,6 +20,7 @@ An MCP (Model Context Protocol) server that integrates with Azure DevOps, enabli
 | [SETUP-GUIDE.md](SETUP-GUIDE.md) | **Start here** — Complete end-to-end setup from scratch |
 | [AZURE-DEPLOYMENT.md](AZURE-DEPLOYMENT.md) | Azure infrastructure deployment reference |
 | [COPILOT-STUDIO-PROMPT.md](COPILOT-STUDIO-PROMPT.md) | Agent instructions, Topic setup, and Power Automate flow |
+| [SONARQUBE-REMEDIATION-WORKFLOW.md](SONARQUBE-REMEDIATION-WORKFLOW.md) | Required issue → branch → PR workflow for SonarQube fixes |
 
 ## Quick Start
 
@@ -98,6 +99,18 @@ The `create_backlog` tool creates:
 - Restrict PAT scopes to minimum required permissions
 - Rotate PATs regularly
 - Enable API key authentication for production
+
+## SonarQube Fix Workflow Policy
+
+When running SonarQube remediation, use the mandatory workflow documented in:
+
+- [SONARQUBE-REMEDIATION-WORKFLOW.md](SONARQUBE-REMEDIATION-WORKFLOW.md)
+
+Summary:
+1. Create a GitHub issue with detailed evidence (rule, severity, files, line refs, impact).
+2. Create a development branch for that issue.
+3. Implement and validate fixes on that branch.
+4. Open a pull request targeting `dev` for human review.
 
 ## References
 

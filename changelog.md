@@ -35,6 +35,11 @@ This changelog tracks updates **from this point onward**, with a focus on MCP se
   4. `create_backlog`
   5. Optional `delete_file`
 
+### Documentation / Process Policy
+- Added mandatory SonarQube remediation process documentation requiring: GitHub issue with evidence → development branch → PR to `dev` → human review.
+- Added dedicated workflow doc: `mcp-server/SONARQUBE-REMEDIATION-WORKFLOW.md`.
+- Linked this workflow from `mcp-server/README.md` and `mcp-server/SETUP-GUIDE.md`.
+
 ---
 
 ## Format for future entries
