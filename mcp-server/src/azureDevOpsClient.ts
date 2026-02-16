@@ -221,7 +221,11 @@ export class AzureDevOpsClient {
 
       const workItems = await witApi.getWorkItems(
         idsToFetch,
-        [filter.project]
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        filter.project
       );
 
       logger.info("Work items listed successfully", { count: workItems.length });
