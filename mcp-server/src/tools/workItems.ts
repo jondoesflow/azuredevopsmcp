@@ -783,10 +783,11 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
 
   for (const [themeName, themeData] of Object.entries(backlogThemes)) {
     // Epic description summarizes its features
+    const featureListHtml = themeData.subtopics.map((s) => `<li>${s}</li>`).join("");
     const epicDescription = [
       `<strong>${themeName}</strong><br/><br/>`,
       `This epic covers the following features:<br/>`,
-      `<ul>${themeData.subtopics.map(s => `<li>${s}</li>`).join("")}</ul>`,
+      `<ul>${featureListHtml}</ul>`,
     ].join("");
     const epic = await client.createWorkItem({ project, witType: "Epic", title: themeName, description: epicDescription });
     epicCount++;
