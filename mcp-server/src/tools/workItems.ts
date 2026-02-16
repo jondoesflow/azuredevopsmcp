@@ -782,22 +782,32 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
   logger.info("Creating full backlog", { project, themes: Object.keys(backlogThemes).length });
 
   for (const [themeName, themeData] of Object.entries(backlogThemes)) {
-    const epic = await client.createWorkItem({ project, witType: "Epic", title: themeName, description: `Epic for theme: ${themeName}` });
+    // Epic description summarizes its features
+    const epicDescription = [
+      `<strong>${themeName}</strong><br/><br/>`,
+      `This epic covers the following features:<br/>`,
+      `<ul>${themeData.subtopics.map(s => `<li>${s}</li>`).join("")}</ul>`,
+    ].join("");
+    const epic = await client.createWorkItem({ project, witType: "Epic", title: themeName, description: epicDescription });
     epicCount++;
     logger.info("Created epic", { id: epic.id, title: themeName });
 
     for (const subtopic of themeData.subtopics) {
-      const feature = await client.createWorkItem({ project, witType: "Feature", title: subtopic, description: `Feature under ${themeName}: ${subtopic}`, parentId: epic.id });
+      // Feature description summarizes its user stories
+      const featureDescription = [
+        `<strong>${subtopic}</strong> — part of ${themeName}<br/><br/>`,
+        `This feature includes the following user story:<br/>`,
+        `<ul><li>Implement ${subtopic.toLowerCase()} capability to support ${themeName.toLowerCase()} requirements</li></ul>`,
+      ].join("");
+      const feature = await client.createWorkItem({ project, witType: "Feature", title: subtopic, description: featureDescription, parentId: epic.id });
       featureCount++;
 
-      const storyTitle = `${subtopic}`;
+      // User story title must differ from feature title
+      const storyTitle = `Implement ${subtopic}`;
       const storyDescription = [
-        `<strong>User Story</strong><br/>`,
-        `As a user, I want ${subtopic.toLowerCase()} so that the system supports ${themeName.toLowerCase()} requirements.`,
-        `<br/><br/><strong>MoSCoW Priority</strong><br/>`,
-        `Must Have`,
-        `<br/><br/><strong>Theme</strong><br/>`,
-        `${themeName}`,
+        `I want ${subtopic.toLowerCase()} so that the system supports ${themeName.toLowerCase()} requirements.<br/><br/>`,
+        `As a user, I need the ability to utilise ${subtopic.toLowerCase()} from within the system, `,
+        `so that I can effectively manage ${themeName.toLowerCase()} processes and workflows.`,
       ].join("");
       const gherkinCriteria = [
         `Given the ${themeName.toLowerCase()} module is available`,
@@ -805,7 +815,10 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
         `Then the system should process the request successfully`,
         `And the result should be visible to the user`,
       ];
-      const story = await client.createWorkItem({ project, witType: "User Story", title: storyTitle, description: storyDescription, parentId: feature.id, acceptanceCriteria: gherkinCriteria });
+      const story = await client.createWorkItem({
+        project, witType: "User Story", title: storyTitle, description: storyDescription,
+        parentId: feature.id, acceptanceCriteria: gherkinCriteria, moscow: "Must",
+      });
       storyCount++;
 
       const taskTitles = [`Analyse requirements for ${subtopic}`, `Design and implement ${subtopic}`, `Test and validate ${subtopic}`];

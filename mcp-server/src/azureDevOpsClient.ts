@@ -13,6 +13,9 @@ export interface WorkItemInput {
   assignedTo?: string;
   parentId?: number;
   acceptanceCriteria?: string[];
+  priority?: number;
+  tags?: string;
+  moscow?: string;
 }
 
 export interface WorkItemFilter {
@@ -109,6 +112,30 @@ export class AzureDevOpsClient {
           op: "add",
           path: "/fields/Microsoft.VSTS.Common.AcceptanceCriteria",
           value: criteriaText,
+        });
+      }
+
+      if (input.priority) {
+        patchDocument.push({
+          op: "add",
+          path: "/fields/Microsoft.VSTS.Common.Priority",
+          value: input.priority,
+        });
+      }
+
+      if (input.tags) {
+        patchDocument.push({
+          op: "add",
+          path: "/fields/System.Tags",
+          value: input.tags,
+        });
+      }
+
+      if (input.moscow) {
+        patchDocument.push({
+          op: "add",
+          path: "/fields/Custom.MoSCoW",
+          value: input.moscow,
         });
       }
 
