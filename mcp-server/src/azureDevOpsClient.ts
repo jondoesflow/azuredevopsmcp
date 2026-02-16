@@ -148,17 +148,47 @@ export class AzureDevOpsClient {
         });
       }
 
-      const workItem = await witApi.createWorkItem(
-        null,
-        patchDocument,
-        input.project,
-        input.witType,
-        false,
-        false
-      );
+      try {
+        const workItem = await witApi.createWorkItem(
+          null,
+          patchDocument,
+          input.project,
+          input.witType,
+          false,
+          false
+        );
 
-      logger.info("Work item created successfully", { id: workItem.id });
-      return workItem;
+        logger.info("Work item created successfully", { id: workItem.id });
+        return workItem;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const isIterationPathError = message.includes("System.IterationPath") && message.includes("Invalid tree name");
+        const hasIterationPath = patchDocument.some((op) => op.path === "/fields/System.IterationPath");
+
+        if (!isIterationPathError || !hasIterationPath) {
+          throw error;
+        }
+
+        logger.warn("Invalid iteration path, retrying work item creation without System.IterationPath", {
+          project: input.project,
+          type: input.witType,
+          title: input.title,
+          iterationPath: input.iterationPath,
+        });
+
+        const fallbackPatchDocument = patchDocument.filter((op) => op.path !== "/fields/System.IterationPath");
+        const workItem = await witApi.createWorkItem(
+          null,
+          fallbackPatchDocument,
+          input.project,
+          input.witType,
+          false,
+          false
+        );
+
+        logger.info("Work item created successfully using fallback without iteration path", { id: workItem.id });
+        return workItem;
+      }
     } catch (error) {
       logger.error("Failed to create work item", error);
       throw error;
