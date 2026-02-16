@@ -777,6 +777,156 @@ function findWorkItemByTitle(
   });
 }
 
+function buildEpicDescription(themeName: string, subtopics: string[]): string {
+  const featureListHtml = subtopics.map((s) => `<li>${s}</li>`).join("");
+  return [
+    `<strong>${themeName}</strong><br/><br/>`,
+    `This epic covers the following features:<br/>`,
+    `<ul>${featureListHtml}</ul>`,
+  ].join("");
+}
+
+function buildFeatureDescription(subtopic: string, themeName: string): string {
+  return [
+    `<strong>${subtopic}</strong> — part of ${themeName}<br/><br/>`,
+    `This feature includes the following user story:<br/>`,
+    `<ul><li>Implement ${subtopic.toLowerCase()} capability to support ${themeName.toLowerCase()} requirements</li></ul>`,
+  ].join("");
+}
+
+function buildStoryDescription(subtopic: string, themeName: string): string {
+  return [
+    `I want ${subtopic.toLowerCase()} so that the system supports ${themeName.toLowerCase()} requirements.<br/><br/>`,
+    `As a user, I need the ability to utilise ${subtopic.toLowerCase()} from within the system, `,
+    `so that I can effectively manage ${themeName.toLowerCase()} processes and workflows.`,
+  ].join("");
+}
+
+function buildGherkinCriteria(subtopic: string, themeName: string): string[] {
+  return [
+    `Given the ${themeName.toLowerCase()} module is available`,
+    `When a user interacts with ${subtopic.toLowerCase()}`,
+    `Then the system should process the request successfully`,
+    `And the result should be visible to the user`,
+  ];
+}
+
+async function getOrCreateEpic(
+  client: AzureDevOpsClient,
+  existingEpics: Array<{ id?: number; fields?: { [key: string]: unknown } }>,
+  project: string,
+  iterationPath: string,
+  themeName: string,
+  uniqueSubtopics: string[]
+): Promise<{ epic: { id?: number; fields?: { [key: string]: unknown } }; created: boolean }> {
+  const existingEpic = findWorkItemByTitle(existingEpics, themeName);
+  if (existingEpic) {
+    logger.info("Reusing existing epic", { id: existingEpic.id, title: themeName });
+    return { epic: existingEpic, created: false };
+  }
+
+  const epic = await client.createWorkItem({
+    project,
+    witType: "Epic",
+    title: themeName,
+    description: buildEpicDescription(themeName, uniqueSubtopics),
+    iterationPath,
+  });
+  existingEpics.unshift(epic);
+  logger.info("Created epic", { id: epic.id, title: themeName });
+  return { epic, created: true };
+}
+
+async function getOrCreateFeature(
+  client: AzureDevOpsClient,
+  project: string,
+  iterationPath: string,
+  epicId: number,
+  subtopic: string,
+  themeName: string
+): Promise<{ feature: { id?: number; fields?: { [key: string]: unknown } }; created: boolean }> {
+  const existingFeatures = await client.listWorkItems({ project, witType: "Feature", parentId: epicId, top: 1000 });
+  const existingFeature = findWorkItemByTitle(existingFeatures, subtopic);
+  if (existingFeature) {
+    logger.info("Reusing existing feature", { id: existingFeature.id, title: subtopic, parentEpicId: epicId });
+    return { feature: existingFeature, created: false };
+  }
+
+  const feature = await client.createWorkItem({
+    project,
+    witType: "Feature",
+    title: subtopic,
+    description: buildFeatureDescription(subtopic, themeName),
+    parentId: epicId,
+    iterationPath,
+  });
+  return { feature, created: true };
+}
+
+async function getOrCreateStory(
+  client: AzureDevOpsClient,
+  project: string,
+  iterationPath: string,
+  featureId: number,
+  subtopic: string,
+  themeName: string
+): Promise<{ story: { id?: number; fields?: { [key: string]: unknown } }; created: boolean }> {
+  const storyTitle = `Implement ${subtopic}`;
+  const existingStories = await client.listWorkItems({ project, witType: "User Story", parentId: featureId, top: 1000 });
+  const existingStory = findWorkItemByTitle(existingStories, storyTitle);
+  if (existingStory) {
+    logger.info("Reusing existing user story", { id: existingStory.id, title: storyTitle, parentFeatureId: featureId });
+    return { story: existingStory, created: false };
+  }
+
+  const story = await client.createWorkItem({
+    project,
+    witType: "User Story",
+    title: storyTitle,
+    description: buildStoryDescription(subtopic, themeName),
+    parentId: featureId,
+    acceptanceCriteria: buildGherkinCriteria(subtopic, themeName),
+    moscow: "Must",
+    iterationPath,
+  });
+  return { story, created: true };
+}
+
+async function createMissingTasks(
+  client: AzureDevOpsClient,
+  project: string,
+  iterationPath: string,
+  storyId: number,
+  subtopic: string
+): Promise<number> {
+  const taskTitles = [
+    `Analyse requirements for ${subtopic}`,
+    `Design and implement ${subtopic}`,
+    `Test and validate ${subtopic}`,
+  ];
+  const existingTasks = await client.listWorkItems({ project, witType: "Task", parentId: storyId, top: 1000 });
+
+  let createdTasks = 0;
+  for (const taskTitle of taskTitles) {
+    const existingTask = findWorkItemByTitle(existingTasks, taskTitle);
+    if (existingTask) {
+      logger.info("Reusing existing task", { id: existingTask.id, title: taskTitle, parentStoryId: storyId });
+      continue;
+    }
+
+    await client.createWorkItem({
+      project,
+      witType: "Task",
+      title: taskTitle,
+      parentId: storyId,
+      iterationPath,
+    });
+    createdTasks++;
+  }
+
+  return createdTasks;
+}
+
 async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput): Promise<string> {
   const backlogStore = getFileStore();
   const backlogCached = backlogStore.get(`__analysis_${input.fileName}`);
@@ -785,7 +935,7 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
   }
   const backlogThemes: Record<string, { mentions: number; subtopics: string[] }> = JSON.parse(backlogCached.content);
   const project = input.project;
-  const iterationPath = input.iterationPath || `${project}\\Route`;
+  const iterationPath = input.iterationPath || String.raw`${project}\Route`;
 
   let epicCount = 0;
   let featureCount = 0;
@@ -798,104 +948,44 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
 
   for (const [themeName, themeData] of Object.entries(backlogThemes)) {
     const uniqueSubtopics = Array.from(new Set(themeData.subtopics));
-
-    // Epic description summarizes its features
-    const featureListHtml = uniqueSubtopics.map((s) => `<li>${s}</li>`).join("");
-    const epicDescription = [
-      `<strong>${themeName}</strong><br/><br/>`,
-      `This epic covers the following features:<br/>`,
-      `<ul>${featureListHtml}</ul>`,
-    ].join("");
-    let epic = findWorkItemByTitle(existingEpics, themeName);
-    if (!epic) {
-      epic = await client.createWorkItem({
-        project,
-        witType: "Epic",
-        title: themeName,
-        description: epicDescription,
-        iterationPath,
-      });
-      existingEpics.unshift(epic);
+    const { epic, created: epicCreated } = await getOrCreateEpic(
+      client,
+      existingEpics,
+      project,
+      iterationPath,
+      themeName,
+      uniqueSubtopics
+    );
+    if (epicCreated) {
       epicCount++;
-      logger.info("Created epic", { id: epic.id, title: themeName });
-    } else {
-      logger.info("Reusing existing epic", { id: epic.id, title: themeName });
     }
 
     for (const subtopic of uniqueSubtopics) {
-      const existingFeatures = await client.listWorkItems({ project, witType: "Feature", parentId: epic.id!, top: 1000 });
-
-      // Feature description summarizes its user stories
-      const featureDescription = [
-        `<strong>${subtopic}</strong> — part of ${themeName}<br/><br/>`,
-        `This feature includes the following user story:<br/>`,
-        `<ul><li>Implement ${subtopic.toLowerCase()} capability to support ${themeName.toLowerCase()} requirements</li></ul>`,
-      ].join("");
-      let feature = findWorkItemByTitle(existingFeatures, subtopic);
-      if (!feature) {
-        feature = await client.createWorkItem({
-          project,
-          witType: "Feature",
-          title: subtopic,
-          description: featureDescription,
-          parentId: epic.id,
-          iterationPath,
-        });
+      const { feature, created: featureCreated } = await getOrCreateFeature(
+        client,
+        project,
+        iterationPath,
+        epic.id!,
+        subtopic,
+        themeName
+      );
+      if (featureCreated) {
         featureCount++;
-      } else {
-        logger.info("Reusing existing feature", { id: feature.id, title: subtopic, parentEpicId: epic.id });
       }
 
-      const existingStories = await client.listWorkItems({ project, witType: "User Story", parentId: feature.id!, top: 1000 });
-
-      // User story title must differ from feature title
-      const storyTitle = `Implement ${subtopic}`;
-      const storyDescription = [
-        `I want ${subtopic.toLowerCase()} so that the system supports ${themeName.toLowerCase()} requirements.<br/><br/>`,
-        `As a user, I need the ability to utilise ${subtopic.toLowerCase()} from within the system, `,
-        `so that I can effectively manage ${themeName.toLowerCase()} processes and workflows.`,
-      ].join("");
-      const gherkinCriteria = [
-        `Given the ${themeName.toLowerCase()} module is available`,
-        `When a user interacts with ${subtopic.toLowerCase()}`,
-        `Then the system should process the request successfully`,
-        `And the result should be visible to the user`,
-      ];
-      let story = findWorkItemByTitle(existingStories, storyTitle);
-      if (!story) {
-        story = await client.createWorkItem({
-          project,
-          witType: "User Story",
-          title: storyTitle,
-          description: storyDescription,
-          parentId: feature.id,
-          acceptanceCriteria: gherkinCriteria,
-          moscow: "Must",
-          iterationPath,
-        });
+      const { story, created: storyCreated } = await getOrCreateStory(
+        client,
+        project,
+        iterationPath,
+        feature.id!,
+        subtopic,
+        themeName
+      );
+      if (storyCreated) {
         storyCount++;
-      } else {
-        logger.info("Reusing existing user story", { id: story.id, title: storyTitle, parentFeatureId: feature.id });
       }
 
-      const taskTitles = [`Analyse requirements for ${subtopic}`, `Design and implement ${subtopic}`, `Test and validate ${subtopic}`];
-      const existingTasks = await client.listWorkItems({ project, witType: "Task", parentId: story.id!, top: 1000 });
-      for (const taskTitle of taskTitles) {
-        const existingTask = findWorkItemByTitle(existingTasks, taskTitle);
-        if (existingTask) {
-          logger.info("Reusing existing task", { id: existingTask.id, title: taskTitle, parentStoryId: story.id });
-          continue;
-        }
-
-        await client.createWorkItem({
-          project,
-          witType: "Task",
-          title: taskTitle,
-          parentId: story.id,
-          iterationPath,
-        });
-        taskCount++;
-      }
+      taskCount += await createMissingTasks(client, project, iterationPath, story.id!, subtopic);
     }
   }
 
