@@ -85,8 +85,9 @@ Additional backlog behaviors:
 - **Deduplication** — Matching is normalized (case/punctuation insensitive) to reduce duplicates across reruns
 - **Legacy story normalization** — Existing story titles that match subtopic names are reused and updated to `Implement ...`
 - **Consistency updates on rerun** — Reused Epics/Features/User Stories/Tasks are updated with current description and path formatting
-- **Default iteration** — `Project\\Sprint 0` (can be overridden via `create_backlog.iterationPath`)
+- **Iteration path rule** — `create_backlog` always assigns `Project\\Backlog`
 - **Default area path** — `Project` (can be overridden via `create_backlog.areaPath`)
+- **Persona derivation** — User story persona is inferred server-side from uploaded transcript content
 
 ## Environment Variables
 

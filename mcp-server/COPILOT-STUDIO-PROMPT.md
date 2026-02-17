@@ -21,16 +21,19 @@ Required execution flow:
 
 Step 1: Call `list_uploaded_files` to confirm the file on the MCP server. Use the returned `fileName`.
 
+Step 1a (hard gate): If `list_uploaded_files` returns zero files, do not continue to analysis or backlog creation. Instruct the user to run the **Process Requirements Document** topic to upload the file first. Do not ask for project name yet when no file is uploaded.
+
 Step 2: Confirm required inputs with the user before creating work items:
 - Azure DevOps project name
-- Iteration path (default to `<Project>\\Sprint 0` if the user does not provide one)
+
+Iteration path rule:
+- The MCP server always uses `<Project>\\Backlog` for backlog creation.
 
 Step 3: Call `analyse_document` with `fileName`.
 
 Step 4: Call `create_backlog` with:
 - `fileName`
 - `project`
-- `iterationPath`
 
 Backlog quality rules to enforce in your response behavior:
 - Hierarchy must be Epic -> Feature -> User Story -> Task.
@@ -38,7 +41,7 @@ Backlog quality rules to enforce in your response behavior:
 - User Story title must not equal Feature title.
 - User Stories must include MoSCoW and Gherkin-style acceptance criteria (Given/When/Then).
 - Keep formatting consistent across all created items.
-- If persona is known from the document, use it (for example, "salesperson"); otherwise use neutral wording.
+- Persona is derived by the MCP server from the uploaded transcript content. Do not ask the user for persona unless they explicitly want to override wording after creation.
 
 Step 5: Report result in this exact format only:
 `Backlog created: X epics, X features, X user stories, and X tasks.`
@@ -94,6 +97,30 @@ Create a Power Automate flow called **"Upload File to MCP Server"** (see flow de
 - Add a **Generative Answers** node or let the orchestrator take over
 - The agent instructions will guide it to call `list_uploaded_files` → `analyse_document` → `create_backlog` → `delete_file`
 - The agent discovers the fileName via `list_uploaded_files`, avoiding any content filtering on file names in messages
+
+## Troubleshooting: Upload topic not being called
+
+If the agent repeatedly calls `list_uploaded_files` and sees `count = 0`, check the following in Copilot Studio:
+
+1. **Trigger phrase match**
+   - Confirm the user message includes a trigger phrase from the topic (for example: "process this document").
+
+2. **Topic priority/routing**
+   - Ensure the **Process Requirements Document** topic is published and active.
+   - Ensure routing does not skip the topic directly to generative answers for upload intents.
+
+3. **Question node configuration**
+   - In the file question node, set **Identify = File** and enable **Include file metadata**.
+   - Confirm file is stored in `Topic.uploadedFile`.
+
+4. **Flow input mapping**
+   - Confirm `Topic.fileName` is mapped from `First(System.Activity.Attachments).Name`.
+   - Confirm `Topic.fileContent` is mapped from `First(System.Activity.Attachments).Content`.
+   - Confirm these values are passed into the Power Automate flow action.
+
+5. **Flow run verification**
+   - In Power Automate run history, verify the flow executes on each upload attempt.
+   - Confirm HTTP POST to `/upload` returns success.
 
 ## Power Automate Flow: "Upload File to MCP Server"
 

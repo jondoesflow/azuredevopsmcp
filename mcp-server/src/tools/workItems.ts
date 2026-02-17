@@ -444,17 +444,9 @@ export const workItemTools: Tool[] = [
           type: "string",
           description: "Azure DevOps project name.",
         },
-        iterationPath: {
-          type: "string",
-          description: "Optional Azure DevOps iteration path. Defaults to <Project>\\Sprint 0.",
-        },
         areaPath: {
           type: "string",
           description: "Optional Azure DevOps area path. Defaults to project root area.",
-        },
-        persona: {
-          type: "string",
-          description: "Optional persona used in generated user story wording (for example: salesperson).",
         },
       },
       required: ["fileName", "project"],
@@ -496,7 +488,6 @@ interface ToolInput {
   project: string;
   iterationPath?: string;
   areaPath?: string;
-  persona?: string;
   state?: string;
   assignedTo?: string;
   epic?: number;
@@ -795,6 +786,39 @@ function normaliseTitle(value: string): string {
   return value.trim().toLowerCase().replaceAll(/[^a-z0-9]+/g, " ").trim();
 }
 
+function detectPersonaFromTranscript(content: string): string {
+  if (!content.trim()) {
+    return "user";
+  }
+
+  const explicitPersona = /as an?\s+([a-z][a-z\s-]{2,40})(?:[,.]|\s+i\s+need|\s+i\s+want)/i.exec(content);
+  if (explicitPersona?.[1]) {
+    return explicitPersona[1].trim().toLowerCase();
+  }
+
+  const lower = content.toLowerCase();
+  const personas = [
+    { persona: "salesperson", keywords: ["sales", "quote", "quotation", "customer proposal"] },
+    { persona: "field engineer", keywords: ["field", "site visit", "technician", "engineer"] },
+    { persona: "project manager", keywords: ["project manager", "delivery plan", "milestone", "programme"] },
+    { persona: "dispatcher", keywords: ["dispatch", "schedule", "routing", "allocate jobs"] },
+    { persona: "finance analyst", keywords: ["invoice", "billing", "cost", "margin", "revenue"] },
+  ];
+
+  let bestPersona = "user";
+  let bestScore = 0;
+
+  for (const candidate of personas) {
+    const score = candidate.keywords.reduce((acc, keyword) => acc + (lower.includes(keyword) ? 1 : 0), 0);
+    if (score > bestScore) {
+      bestScore = score;
+      bestPersona = candidate.persona;
+    }
+  }
+
+  return bestPersona;
+}
+
 function buildEpicDescription(themeName: string, subtopics: string[]): string {
   const featureListHtml = subtopics.map((s) => `<li>${s}</li>`).join("");
   return [
@@ -1002,18 +1026,19 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
   if (!backlogCached) {
     return JSON.stringify({ result: "error", message: "No analysis found. Call analyse_document first." });
   }
+  const uploadedFile = backlogStore.get(input.fileName!);
   const backlogThemes: Record<string, { mentions: number; subtopics: string[] }> = JSON.parse(backlogCached.content);
   const project = input.project;
-  const iterationPath = input.iterationPath || `${project}\\Sprint 0`;
+  const iterationPath = `${project}\\Backlog`;
   const areaPath = input.areaPath || project;
-  const persona = input.persona || "user";
+  const persona = detectPersonaFromTranscript(uploadedFile?.content ?? "");
 
   let epicCount = 0;
   let featureCount = 0;
   let storyCount = 0;
   let taskCount = 0;
 
-  logger.info("Creating full backlog", { project, themes: Object.keys(backlogThemes).length });
+  logger.info("Creating full backlog", { project, themes: Object.keys(backlogThemes).length, persona, iterationPath });
 
   const existingEpics = await client.listWorkItems({ project, witType: "Epic", top: 1000 });
 

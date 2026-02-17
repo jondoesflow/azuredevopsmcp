@@ -6,8 +6,9 @@ This changelog tracks updates **from this point onward**, with a focus on MCP se
 
 ### MCP Server (mcp-server)
 - Improved `create_backlog` quality and consistency behavior:
-  - Added optional `iterationPath`, `areaPath`, and `persona` inputs for generated work items.
-  - Updated defaults to use iteration path `Project\\Sprint 0` and area path `Project` when not provided.
+  - Added optional `areaPath` input for generated work items.
+  - `create_backlog` now enforces iteration path `Project\\Backlog` for all generated backlog items.
+  - Persona is now derived automatically by the MCP server from the uploaded transcript content.
   - Strengthened deduplication with normalized title matching (case/punctuation insensitive).
   - Added compatibility matching so existing legacy story titles (for example, matching the feature title) are reused and normalized instead of duplicated.
   - Standardized story description format to include explicit **User Story** and **Context** sections.
@@ -22,8 +23,9 @@ This changelog tracks updates **from this point onward**, with a focus on MCP se
 
 ### Prompt/Orchestration Alignment
 - Updated Copilot Studio prompt to:
-  - confirm project and iteration path before `create_backlog`
-  - pass `iterationPath` explicitly
+  - confirm project before `create_backlog`
+  - document fixed server-side iteration path rule: `Project\\Backlog`
+  - document server-side persona derivation from transcript
   - enforce strict result formatting and safe metadata-only handling
 
 ### Deployment
