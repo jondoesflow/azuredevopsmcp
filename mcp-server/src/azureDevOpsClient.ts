@@ -365,16 +365,44 @@ export class AzureDevOpsClient {
         throw new Error("No fields to update");
       }
 
-      const workItem = await witApi.updateWorkItem(
-        null,
-        patchDocument,
-        update.workItemId,
-        update.project,
-        false
-      );
+      try {
+        const workItem = await witApi.updateWorkItem(
+          null,
+          patchDocument,
+          update.workItemId,
+          update.project,
+          false
+        );
 
-      logger.info("Work item updated successfully", { id: workItem.id });
-      return workItem;
+        logger.info("Work item updated successfully", { id: workItem.id });
+        return workItem;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const isIterationPathError = message.includes("System.IterationPath") && message.includes("Invalid tree name");
+        const hasIterationPath = patchDocument.some((op) => op.path === "/fields/System.IterationPath");
+
+        if (!isIterationPathError || !hasIterationPath) {
+          throw error;
+        }
+
+        logger.warn("Invalid iteration path, retrying work item update without System.IterationPath", {
+          project: update.project,
+          workItemId: update.workItemId,
+          iterationPath: update.iterationPath,
+        });
+
+        const fallbackPatchDocument = patchDocument.filter((op) => op.path !== "/fields/System.IterationPath");
+        const workItem = await witApi.updateWorkItem(
+          null,
+          fallbackPatchDocument,
+          update.workItemId,
+          update.project,
+          false
+        );
+
+        logger.info("Work item updated successfully using fallback without iteration path", { id: workItem.id });
+        return workItem;
+      }
     } catch (error) {
       logger.error("Failed to update work item", error);
       throw error;

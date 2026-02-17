@@ -42,6 +42,10 @@ function truncate(text: string, max: number = 200): string {
   return text.substring(0, max) + "...";
 }
 
+function toSingleLine(value: string): string {
+  return value.replaceAll(/[\r\n]+/g, " ").replaceAll(/\s+/g, " ").trim();
+}
+
 export interface Tool {
   name: string;
   description: string;
@@ -1814,7 +1818,8 @@ export async function handleWorkItemTool(
   } catch (error) {
     logger.error(`Error handling tool ${toolName}`, error);
     if (error instanceof Error) {
-      throw new Error(`Operation failed.`);
+      const safeMessage = truncate(toSingleLine(error.message || "Operation failed"), 400);
+      throw new Error(`Operation failed: ${safeMessage}`);
     }
     throw new Error(`Operation failed.`);
   }
