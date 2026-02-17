@@ -46,7 +46,9 @@ This changelog tracks updates **from this point onward**, with a focus on MCP se
   - retain explicit legacy fallback path for transcript/theme workflows
 
 ### Deployment
-- Prepared for next deployment tag after code validation.
+- Image tag: `v33`
+- ACR digest: `sha256:cd739d3b54bd5afa9d1bb1f813a17f1c1f2530b1491837c8f156df73f884157a`
+- Container endpoint: `http://mcp-cgsparc.uksouth.azurecontainer.io`
 
 ## 2026-02-16
 
