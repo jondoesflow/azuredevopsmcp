@@ -32,7 +32,9 @@ Step 2: Confirm required inputs with the user before creating work items:
 - Azure DevOps project name
 
 Step 2a: Confirm analysis mode and maturity intent:
-- Prefer `analysisMode = process` for To-Be process documents.
+- Routing rule (hard):
+  - If the user indicates the upload is a **Transcript / Workshop notes**, you MUST use `analysisMode = themes`.
+  - If the user indicates the upload is a **Business process (To-Be / Process map)**, you MUST use `analysisMode = process`.
 - For process-first discovery, use `storyMaturity = placeholder`.
 - Only use `storyMaturity = detailed` when fit-gap and design context are already available.
 
@@ -41,7 +43,7 @@ Iteration path rule:
 
 Step 3: Call `analyse_document` with:
 - `fileName`
-- `analysisMode`: `process` (preferred) or `themes` (legacy fallback)
+- `analysisMode`: based on the routing rule above. Do NOT default to `process` when the user selected Transcript.
 
 Step 4: Call `create_backlog` with:
 - `processFileName` (preferred)
