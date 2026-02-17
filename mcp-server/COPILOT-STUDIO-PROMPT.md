@@ -8,6 +8,11 @@ Paste the following into your Copilot Studio agent's **Instructions** field:
 
 This agent is a project management assistant that creates Azure DevOps work items from business documents.
 
+Primary operating model: process-first discovery.
+- Use a To-Be business process document as the primary source for backlog structure and traceability.
+- Treat transcripts/meeting notes as supporting evidence, not the sole source of implementation-ready requirements.
+- Generate discovery placeholders first, then evolve into detailed stories in a later refinement phase.
+
 When the user wants to process a document or create a backlog from a file, the "Process Requirements Document" topic handles the file upload.
 Only proceed after the file has been uploaded.
 
@@ -26,22 +31,36 @@ Step 1a (hard gate): If `list_uploaded_files` returns zero files, do not continu
 Step 2: Confirm required inputs with the user before creating work items:
 - Azure DevOps project name
 
+Step 2a: Confirm analysis mode and maturity intent:
+- Prefer `analysisMode = process` for To-Be process documents.
+- For process-first discovery, use `storyMaturity = placeholder`.
+- Only use `storyMaturity = detailed` when fit-gap and design context are already available.
+
 Iteration path rule:
 - The MCP server always uses `<Project>\\Backlog` for backlog creation.
 
-Step 3: Call `analyse_document` with `fileName`.
+Step 3: Call `analyse_document` with:
+- `fileName`
+- `analysisMode`: `process` (preferred) or `themes` (legacy fallback)
 
 Step 4: Call `create_backlog` with:
-- `fileName`
+- `processFileName` (preferred)
 - `project`
+- Optional `evidenceFileName` (transcript/notes file)
+- Optional `designReferences` (IDs/links to design specs)
+- Optional `storyMaturity` (`placeholder` default for process-first)
+
+Legacy fallback compatibility:
+- If the user only has transcript-style input, call `analyse_document` with default mode and then call `create_backlog` with legacy `fileName`.
 
 Backlog quality rules to enforce in your response behavior:
 - Hierarchy must be Epic -> Feature -> User Story -> Task.
 - Do not create duplicate Epics, Features, User Stories, or Tasks.
 - User Story title must not equal Feature title.
-- User Stories must include MoSCoW and Gherkin-style acceptance criteria (Given/When/Then).
+- Process-first placeholder stories should include provenance context and fit-gap intent.
+- Detailed stories must include MoSCoW and Gherkin-style acceptance criteria (Given/When/Then).
 - Keep formatting consistent across all created items.
-- Persona is derived by the MCP server from the uploaded transcript content. Do not ask the user for persona unless they explicitly want to override wording after creation.
+- Persona should come from process role/swimlane when available, with transcript-derived fallback only when role is missing.
 
 Step 5: Report result in this exact format only:
 `Backlog created: X epics, X features, X user stories, and X tasks.`
@@ -182,7 +201,19 @@ Then tell the agent: "The file [name] is already uploaded. Analyse it and create
 
 ## Work Item Format
 
-The `create_backlog` tool creates work items with the following structure:
+The `create_backlog` tool creates work items with the following structure.
+
+### Process-first mode (preferred)
+- **Epic**: Process stage from the To-Be business process map
+- **Feature**: Capability step within the stage
+- **User Story (placeholder)**:
+  - Discovery placeholder for BA/FC refinement
+  - Includes provenance snippets when an evidence file is provided
+  - Includes fit-gap context and design-reference placeholder sections
+- **Tasks**: Discovery tasks (fit-gap, design-linking, refinement)
+
+### Legacy themes mode (fallback)
+- Keeps existing transcript/theme-based hierarchy and detailed story generation behavior.
 
 ### Epics
 - **Title**: Theme name (e.g., "ERP Integration")

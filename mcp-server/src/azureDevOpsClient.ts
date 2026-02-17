@@ -40,6 +40,7 @@ export interface WorkItemUpdate {
   areaPath?: string;
   acceptanceCriteria?: string[];
   moscow?: string;
+  tags?: string;
 }
 
 export class AzureDevOpsClient {
@@ -349,6 +350,14 @@ export class AzureDevOpsClient {
           op: "replace",
           path: "/fields/Custom.MoSCoW",
           value: update.moscow,
+        });
+      }
+
+      if (update.tags) {
+        patchDocument.push({
+          op: "replace",
+          path: "/fields/System.Tags",
+          value: update.tags,
         });
       }
 

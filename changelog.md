@@ -13,12 +13,24 @@ This changelog tracks updates **from this point onward**, with a focus on MCP se
   - Added compatibility matching so existing legacy story titles (for example, matching the feature title) are reused and normalized instead of duplicated.
   - Standardized story description format to include explicit **User Story** and **Context** sections.
   - Enhanced feature and epic descriptions with clearer summary wording.
+- Added process-first discovery capabilities alongside legacy tooling:
+  - `analyse_document` now supports `analysisMode` with `themes` (legacy default) and `process` (To-Be process-first).
+  - Analysis output is now stored with mode metadata for backward compatibility.
+  - `create_backlog` now supports process-first inputs:
+    - `processFileName` (preferred analysed process document)
+    - `evidenceFileName` (optional transcript/supporting evidence)
+    - `storyMaturity` (`placeholder` default for process-first, optional `detailed`)
+    - `designReferences` (optional traceability links/IDs)
+  - Process-first backlog generation now creates discovery placeholder stories with fit-gap and provenance context.
+  - Process-first tasks now focus on fit-gap, design linking, and refinement before implementation.
+  - Legacy transcript/theme backlog generation remains supported for backward compatibility.
 
 ### Azure DevOps Client
 - Extended work item create support:
   - Added `areaPath` support (`/fields/System.AreaPath`) on create.
 - Extended work item update support to normalize reused items during backlog regeneration:
   - Added support to update title, description, iteration path, area path, MoSCoW, and acceptance criteria.
+- Added support to update work item tags (`System.Tags`) during update operations to preserve process-first provenance markers.
 - Existing invalid-iteration fallback remains in place: if an iteration path is invalid, create retries without `System.IterationPath`.
 
 ### Prompt/Orchestration Alignment
@@ -27,6 +39,11 @@ This changelog tracks updates **from this point onward**, with a focus on MCP se
   - document fixed server-side iteration path rule: `Project\\Backlog`
   - document server-side persona derivation from transcript
   - enforce strict result formatting and safe metadata-only handling
+- Updated prompt with process-first operating guidance:
+  - prefer `analysisMode=process` for To-Be process docs
+  - use placeholder story maturity during discovery
+  - treat transcripts as supporting evidence rather than sole source of truth
+  - retain explicit legacy fallback path for transcript/theme workflows
 
 ### Deployment
 - Prepared for next deployment tag after code validation.

@@ -68,18 +68,28 @@ Test: `curl http://localhost:3000/health`
 | `delete_file` | Deletes an uploaded file |
 | `get_file_content` | Returns file metadata and chunk info |
 | `get_file_chunk` | Returns a specific chunk of a large file |
-| `analyse_document` | Analyses document server-side, extracts themes |
+| `analyse_document` | Analyses document server-side in `themes` (legacy) or `process` (process-first) mode |
 | `get_theme_details` | Returns subtopics for a specific theme |
-| `create_backlog` | Creates full backlog from analysed document |
+| `create_backlog` | Creates backlog from analysed document (process-first placeholders or legacy themes) |
 
 ## Work Item Format
 
-The `create_backlog` tool creates:
-- **Epic** — One per theme, title is the theme name
-- **Feature** — One per subtopic, linked to epic
-- **User Story** — Short title, description with "As a... I want... so that..." + MoSCoW priority
-- **Acceptance Criteria** — Gherkin format (Given/When/Then/And)
-- **Tasks** — 3 per story (Analyse / Design & implement / Test & validate)
+The `create_backlog` tool supports two compatible operating modes:
+
+### Process-first mode (recommended)
+- Input pattern:
+  - `analyse_document(fileName, analysisMode="process")`
+  - `create_backlog(project, processFileName, evidenceFileName?, storyMaturity?, designReferences?, areaPath?)`
+- **Epic** — One per process stage from the To-Be process model
+- **Feature** — One per capability/process step under each stage
+- **User Story** — Discovery placeholder by default (`storyMaturity="placeholder"`) with provenance and fit-gap context
+- **Tasks** — Discovery tasks (fit-gap, design-linking, and story refinement)
+
+### Legacy themes mode (backward compatibility)
+- Input pattern:
+  - `analyse_document(fileName)` (defaults to `themes`)
+  - `create_backlog(project, fileName, areaPath?)`
+- Behavior remains theme/subtopic-based with detailed stories and Gherkin acceptance criteria.
 
 Additional backlog behaviors:
 - **Deduplication** — Matching is normalized (case/punctuation insensitive) to reduce duplicates across reruns
@@ -87,7 +97,8 @@ Additional backlog behaviors:
 - **Consistency updates on rerun** — Reused Epics/Features/User Stories/Tasks are updated with current description and path formatting
 - **Iteration path rule** — `create_backlog` always assigns `Project\\Backlog`
 - **Default area path** — `Project` (can be overridden via `create_backlog.areaPath`)
-- **Persona derivation** — User story persona is inferred server-side from uploaded transcript content
+- **Persona derivation** — Process role/swimlane (when detected) is used first, with transcript fallback
+- **Traceability support** — Process-first placeholders can include transcript evidence snippets and design references
 
 ## Environment Variables
 

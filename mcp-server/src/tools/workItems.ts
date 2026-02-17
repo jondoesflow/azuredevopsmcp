@@ -16,6 +16,26 @@ function stripHtml(html: string | undefined | null): string {
     .trim();
 }
 
+type AnalysisMode = "themes" | "process";
+type StoryMaturity = "placeholder" | "detailed";
+
+interface ProcessStep {
+  title: string;
+  role?: string;
+  evidenceTerms: string[];
+}
+
+interface ProcessStage {
+  title: string;
+  steps: ProcessStep[];
+}
+
+interface StoredAnalysis {
+  analysisMode: AnalysisMode;
+  themes?: Record<string, { mentions: number; subtopics: string[] }>;
+  processStages?: ProcessStage[];
+}
+
 // Truncate text to avoid large payloads triggering content filters
 function truncate(text: string, max: number = 200): string {
   if (text.length <= max) return text;
@@ -400,13 +420,17 @@ export const workItemTools: Tool[] = [
   },
   {
     name: "analyse_document",
-    description: "Analyses a large uploaded file server-side and returns a list of themes found. Call get_theme_details for each theme to get subtopics before creating work items.",
+    description: "Analyses an uploaded file server-side. Supports legacy theme extraction and process-document extraction for process-first backlog creation.",
     inputSchema: {
       type: "object" as const,
       properties: {
         fileName: {
           type: "string",
           description: "Name of the uploaded file to analyse.",
+        },
+        analysisMode: {
+          type: "string",
+          description: "Optional analysis mode: 'themes' (legacy) or 'process' (process-first). Defaults to 'themes'.",
         },
       },
       required: ["fileName"],
@@ -432,13 +456,32 @@ export const workItemTools: Tool[] = [
   },
   {
     name: "create_backlog",
-    description: "Creates a full backlog of Epics, Features, User Stories, and Tasks from a previously analysed document. Call analyse_document first. This creates all work items in one operation and returns a count summary.",
+    description: "Creates a backlog from a previously analysed document. Supports process-first placeholder discovery backlogs and legacy transcript/theme backlog generation.",
     inputSchema: {
       type: "object" as const,
       properties: {
         fileName: {
           type: "string",
-          description: "Name of the uploaded file that was analysed.",
+          description: "Legacy analysed file name. Backward compatible alias when processFileName is not provided.",
+        },
+        processFileName: {
+          type: "string",
+          description: "Primary analysed process-document file name for process-first backlog generation.",
+        },
+        evidenceFileName: {
+          type: "string",
+          description: "Optional supporting transcript/notes file name used to add provenance snippets.",
+        },
+        storyMaturity: {
+          type: "string",
+          description: "Optional story maturity mode: 'placeholder' (discovery default for process) or 'detailed'.",
+        },
+        designReferences: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+          description: "Optional design reference links/IDs to attach in story context for traceability.",
         },
         project: {
           type: "string",
@@ -449,7 +492,7 @@ export const workItemTools: Tool[] = [
           description: "Optional Azure DevOps area path. Defaults to project root area.",
         },
       },
-      required: ["fileName", "project"],
+      required: ["project"],
     },
   },
   {
@@ -486,6 +529,7 @@ export const workItemTools: Tool[] = [
 
 interface ToolInput {
   project: string;
+  analysisMode?: AnalysisMode;
   iterationPath?: string;
   areaPath?: string;
   state?: string;
@@ -503,6 +547,10 @@ interface ToolInput {
   acceptanceCriteria?: string[];
   workItemId?: number;
   fileName?: string;
+  processFileName?: string;
+  evidenceFileName?: string;
+  storyMaturity?: StoryMaturity;
+  designReferences?: string[];
   fileContent?: string;
   contentUrl?: string;
   contentType?: string;
@@ -721,6 +769,119 @@ function scanSectionForThemes(sectionText: string, themeDetails: Record<string, 
   }
 }
 
+function parseAnalysisMode(rawMode: string | undefined): AnalysisMode {
+  return rawMode?.toLowerCase() === "process" ? "process" : "themes";
+}
+
+function isLikelyProcessStep(line: string): boolean {
+  if (!line || line.length < 8 || line.length > 180) {
+    return false;
+  }
+  return /^(-|\*|•|\d+[.)])\s+/.test(line)
+    || /\b(then|after|before|next|submit|approve|validate|handoff|dispatch|book|invoice)\b/i.test(line)
+    || line.includes("->")
+    || line.includes("→");
+}
+
+function extractRoleFromStep(line: string): string | undefined {
+  const rolePrefix = /^(?:- |\* |• |\d+[.)]\s+)?(?:role|actor|persona|swimlane)\s*[:\-]\s*([a-z][a-z\s\-/]{2,40})/i.exec(line);
+  if (rolePrefix?.[1]) {
+    return rolePrefix[1].trim().toLowerCase();
+  }
+  return undefined;
+}
+
+function extractEvidenceTerms(value: string): string[] {
+  return Array.from(
+    new Set(
+      value
+        .toLowerCase()
+        .replaceAll(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((t) => t.length > 3)
+        .slice(0, 6)
+    )
+  );
+}
+
+function analyseProcessDocument(content: string): ProcessStage[] {
+  const lines = content.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+  const stages: ProcessStage[] = [];
+  let currentStage: ProcessStage = { title: "To-Be Process Flow", steps: [] };
+
+  const pushCurrentStage = () => {
+    if (currentStage.steps.length > 0 && !stages.find((s) => normaliseTitle(s.title) === normaliseTitle(currentStage.title))) {
+      stages.push(currentStage);
+    }
+  };
+
+  for (const line of lines) {
+    const stageMatch = /^(?:\d+\s*[.)-]?\s*)?(?:stage|phase|process stage|process phase)\s*[:\-]\s*(.+)$/i.exec(line)
+      || /^(?:to[-\s]?be|future state)\s*[:\-]\s*(.+)$/i.exec(line);
+    if (stageMatch?.[1]) {
+      pushCurrentStage();
+      currentStage = { title: stageMatch[1].trim(), steps: [] };
+      continue;
+    }
+
+    if (!isLikelyProcessStep(line)) {
+      continue;
+    }
+
+    const cleanedTitle = line
+      .replace(/^(-|\*|•|\d+[.)])\s+/, "")
+      .replaceAll(/\s+/g, " ")
+      .trim();
+
+    if (!cleanedTitle) {
+      continue;
+    }
+
+    const role = extractRoleFromStep(cleanedTitle);
+    currentStage.steps.push({
+      title: cleanedTitle,
+      role,
+      evidenceTerms: extractEvidenceTerms(cleanedTitle),
+    });
+  }
+
+  pushCurrentStage();
+  if (stages.length === 0) {
+    return [
+      {
+        title: "To-Be Process Flow",
+        steps: lines.slice(0, 20).map((line) => ({
+          title: line,
+          role: extractRoleFromStep(line),
+          evidenceTerms: extractEvidenceTerms(line),
+        })),
+      },
+    ];
+  }
+
+  return stages.map((stage) => ({
+    ...stage,
+    steps: stage.steps.slice(0, 12),
+  }));
+}
+
+function parseStoredAnalysis(rawContent: string): StoredAnalysis {
+  const parsed = JSON.parse(rawContent) as unknown;
+  if (
+    typeof parsed === "object"
+    && parsed !== null
+    && "analysisMode" in parsed
+    && ((parsed as StoredAnalysis).analysisMode === "themes" || (parsed as StoredAnalysis).analysisMode === "process")
+  ) {
+    return parsed as StoredAnalysis;
+  }
+
+  return {
+    analysisMode: "themes",
+    themes: parsed as Record<string, { mentions: number; subtopics: string[] }>,
+  };
+}
+
 function handleAnalyseDocument(input: ToolInput): string {
   const fileStore = getFileStore();
   const file = fileStore.get(input.fileName!);
@@ -728,6 +889,36 @@ function handleAnalyseDocument(input: ToolInput): string {
     return JSON.stringify({ result: "error", message: "File not found" });
   }
   logger.info("Analysing document server-side", { fileName: file.name, size: file.content.length });
+
+  const analysisMode = parseAnalysisMode(input.analysisMode);
+
+  if (analysisMode === "process") {
+    const processStages = analyseProcessDocument(file.content);
+    const analysis: StoredAnalysis = {
+      analysisMode,
+      processStages,
+    };
+    fileStore.set(`__analysis_${file.name}`, {
+      name: `__analysis_${file.name}`,
+      content: JSON.stringify(analysis),
+      mimeType: "application/json",
+      uploadedAt: new Date(),
+    });
+
+    const stageSummary = processStages.map((stage) => ({
+      stage: stage.title,
+      steps: stage.steps.length,
+      rolesDetected: Array.from(new Set(stage.steps.map((step) => step.role).filter((r): r is string => Boolean(r)))).length,
+    }));
+
+    return JSON.stringify({
+      result: "success",
+      analysisMode,
+      fileName: file.name,
+      stagesFound: stageSummary.length,
+      stages: stageSummary,
+    });
+  }
 
   const lines = file.content.split(/\n/);
   const totalLines = lines.length;
@@ -746,15 +937,20 @@ function handleAnalyseDocument(input: ToolInput): string {
     }
   }
 
+  const analysis: StoredAnalysis = {
+    analysisMode,
+    themes: finalThemes,
+  };
+
   fileStore.set(`__analysis_${file.name}`, {
     name: `__analysis_${file.name}`,
-    content: JSON.stringify(finalThemes),
+    content: JSON.stringify(analysis),
     mimeType: "application/json",
     uploadedAt: new Date(),
   });
 
   const themeList = Object.entries(finalThemes).map(([name, d]) => ({ name, mentions: d.mentions, subtopicCount: d.subtopics.length }));
-  return JSON.stringify({ result: "success", fileName: file.name, totalLines, themesFound: themeList.length, themes: themeList });
+  return JSON.stringify({ result: "success", analysisMode, fileName: file.name, totalLines, themesFound: themeList.length, themes: themeList });
 }
 
 function handleGetThemeDetails(input: ToolInput): string {
@@ -763,7 +959,12 @@ function handleGetThemeDetails(input: ToolInput): string {
   if (!cached) {
     return JSON.stringify({ result: "error", message: "No analysis found. Call analyse_document first." });
   }
-  const allThemes: Record<string, { mentions: number; subtopics: string[] }> = JSON.parse(cached.content);
+  const storedAnalysis = parseStoredAnalysis(cached.content);
+  if (storedAnalysis.analysisMode !== "themes") {
+    return JSON.stringify({ result: "error", message: "The analysed file is in process mode. Theme details are only available for analysisMode='themes'." });
+  }
+
+  const allThemes: Record<string, { mentions: number; subtopics: string[] }> = storedAnalysis.themes ?? {};
   const theme = allThemes[input.themeName!];
   if (!theme) {
     return JSON.stringify({ result: "error", message: "Theme not found.", availableThemes: Object.keys(allThemes) });
@@ -817,6 +1018,13 @@ function detectPersonaFromTranscript(content: string): string {
   }
 
   return bestPersona;
+}
+
+function getBestPersona(role: string | undefined, fallbackContent: string): string {
+  if (role && role.trim()) {
+    return role.trim().toLowerCase();
+  }
+  return detectPersonaFromTranscript(fallbackContent);
 }
 
 function buildEpicDescription(themeName: string, subtopics: string[]): string {
@@ -981,9 +1189,10 @@ async function createMissingTasks(
   iterationPath: string,
   areaPath: string,
   storyId: number,
-  subtopic: string
+  subtopic: string,
+  taskTitles?: string[]
 ): Promise<number> {
-  const taskTitles = [
+  const titles = taskTitles ?? [
     `Analyse requirements for ${subtopic}`,
     `Design and implement ${subtopic}`,
     `Test and validate ${subtopic}`,
@@ -991,7 +1200,7 @@ async function createMissingTasks(
   const existingTasks = await client.listWorkItems({ project, witType: "Task", parentId: storyId, top: 1000 });
 
   let createdTasks = 0;
-  for (const taskTitle of taskTitles) {
+  for (const taskTitle of titles) {
     const existingTask = findWorkItemByTitle(existingTasks, taskTitle);
     if (existingTask) {
       if (existingTask.id) {
@@ -1020,14 +1229,285 @@ async function createMissingTasks(
   return createdTasks;
 }
 
+function buildProcessEpicDescription(stage: ProcessStage): string {
+  const steps = stage.steps.map((step) => `<li>${step.title}</li>`).join("");
+  return [
+    `<strong>${stage.title}</strong><br/><br/>`,
+    "This epic is aligned to a To-Be process stage for discovery and traceability.<br/><br/>",
+    "Stage activities:<br/>",
+    `<ul>${steps}</ul>`,
+  ].join("");
+}
+
+function buildProcessFeatureDescription(step: ProcessStep, stageTitle: string): string {
+  return [
+    `<strong>${step.title}</strong><br/><br/>`,
+    `This feature represents a capability slice within the process stage <strong>${stageTitle}</strong>.`,
+  ].join("");
+}
+
+function selectEvidenceSnippets(evidenceContent: string, terms: string[]): string[] {
+  if (!evidenceContent.trim() || terms.length === 0) {
+    return [];
+  }
+
+  const lines = evidenceContent
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 10);
+
+  const matches = lines
+    .filter((line) => {
+      const lower = line.toLowerCase();
+      return terms.some((term) => lower.includes(term));
+    })
+    .slice(0, 3)
+    .map((line) => truncate(line, 220));
+
+  return matches;
+}
+
+function buildPlaceholderStoryDescription(
+  step: ProcessStep,
+  stageTitle: string,
+  persona: string,
+  evidenceSnippets: string[],
+  designReferences: string[]
+): string {
+  const evidenceSection = evidenceSnippets.length > 0
+    ? `<strong>Provenance snippets</strong><br/><ul>${evidenceSnippets.map((snippet) => `<li>${snippet}</li>`).join("")}</ul><br/>`
+    : "<strong>Provenance snippets</strong><br/>No supporting transcript snippet linked.<br/><br/>";
+
+  const designSection = designReferences.length > 0
+    ? `<strong>Design references</strong><br/><ul>${designReferences.map((ref) => `<li>${ref}</li>`).join("")}</ul><br/>`
+    : "<strong>Design references</strong><br/>To be linked during fit-gap and solution design.<br/><br/>";
+
+  return [
+    "<strong>Discovery placeholder story</strong><br/>",
+    `As a ${persona}, I need clarity on <strong>${step.title.toLowerCase()}</strong> in stage <strong>${stageTitle}</strong>, so that fit-gap and design decisions can be completed before implementation.<br/><br/>`,
+    "<strong>Status</strong><br/>Fit-gap assessment: Unassessed<br/>",
+    evidenceSection,
+    designSection,
+  ].join("");
+}
+
+async function getOrCreateProcessStory(
+  client: AzureDevOpsClient,
+  project: string,
+  iterationPath: string,
+  areaPath: string,
+  featureId: number,
+  step: ProcessStep,
+  stageTitle: string,
+  evidenceContent: string,
+  storyMaturity: StoryMaturity,
+  designReferences: string[]
+): Promise<{ story: { id?: number; fields?: { [key: string]: unknown } }; created: boolean }> {
+  const storyTitle = storyMaturity === "placeholder" ? `Discovery placeholder: ${step.title}` : `Implement ${step.title}`;
+  const existingStories = await client.listWorkItems({ project, witType: "User Story", parentId: featureId, top: 1000 });
+  const existingStory = findWorkItemByTitle(existingStories, storyTitle) || findWorkItemByTitle(existingStories, step.title);
+  const persona = getBestPersona(step.role, evidenceContent);
+  const evidenceSnippets = selectEvidenceSnippets(evidenceContent, step.evidenceTerms);
+
+  const description = storyMaturity === "placeholder"
+    ? buildPlaceholderStoryDescription(step, stageTitle, persona, evidenceSnippets, designReferences)
+    : buildStoryDescription(step.title, stageTitle, persona);
+
+  const acceptanceCriteria = storyMaturity === "placeholder"
+    ? [
+      "Given fit-gap analysis has not yet been completed",
+      "When the BA/FC reviews this placeholder with stakeholders",
+      "Then the requirement intent, constraints, and outcomes are clarified",
+      "And linked design references are identified before implementation starts",
+    ]
+    : buildGherkinCriteria(step.title, stageTitle, persona);
+
+  const tags = storyMaturity === "placeholder"
+    ? "Discovery;Process-First;FitGap-Unassessed"
+    : "Discovery;Process-First;Ready-For-Detail";
+
+  if (existingStory) {
+    if (existingStory.id) {
+      await client.updateWorkItem({
+        project,
+        workItemId: existingStory.id,
+        title: storyTitle,
+        description,
+        acceptanceCriteria,
+        moscow: "Must",
+        iterationPath,
+        areaPath,
+        tags,
+      });
+    }
+    logger.info("Reusing existing process user story", { id: existingStory.id, title: storyTitle, parentFeatureId: featureId });
+    return { story: existingStory, created: false };
+  }
+
+  const story = await client.createWorkItem({
+    project,
+    witType: "User Story",
+    title: storyTitle,
+    description,
+    parentId: featureId,
+    acceptanceCriteria,
+    moscow: "Must",
+    iterationPath,
+    areaPath,
+    tags,
+  });
+  return { story, created: true };
+}
+
+async function handleCreateBacklogFromProcess(
+  client: AzureDevOpsClient,
+  input: ToolInput,
+  analysis: StoredAnalysis,
+  analysisFileName: string
+): Promise<string> {
+  const backlogStore = getFileStore();
+  const processStages = analysis.processStages ?? [];
+  if (processStages.length === 0) {
+    return JSON.stringify({ result: "error", message: "No process stages found. Re-run analyse_document with analysisMode='process'." });
+  }
+
+  const project = input.project;
+  const iterationPath = `${project}\\Backlog`;
+  const areaPath = input.areaPath || project;
+  const evidenceFileName = input.evidenceFileName || input.fileName;
+  const evidenceContent = evidenceFileName ? backlogStore.get(evidenceFileName)?.content ?? "" : "";
+  const storyMaturity: StoryMaturity = input.storyMaturity === "detailed" ? "detailed" : "placeholder";
+  const designReferences = (input.designReferences ?? []).filter((item) => item.trim().length > 0);
+
+  let epicCount = 0;
+  let featureCount = 0;
+  let storyCount = 0;
+  let taskCount = 0;
+
+  logger.info("Creating process-first backlog", {
+    project,
+    processFileName: analysisFileName,
+    stages: processStages.length,
+    storyMaturity,
+    iterationPath,
+  });
+
+  const existingEpics = await client.listWorkItems({ project, witType: "Epic", top: 1000 });
+  for (const stage of processStages) {
+    const uniqueSteps = Array.from(new Map(stage.steps.map((step) => [normaliseTitle(step.title), step])).values());
+
+    const { epic, created: epicCreated } = await getOrCreateEpic(
+      client,
+      existingEpics,
+      project,
+      iterationPath,
+      areaPath,
+      stage.title,
+      uniqueSteps.map((step) => step.title)
+    );
+
+    if (epicCreated) {
+      epicCount++;
+    } else if (epic.id) {
+      await client.updateWorkItem({
+        project,
+        workItemId: epic.id,
+        description: buildProcessEpicDescription(stage),
+        iterationPath,
+        areaPath,
+      });
+    }
+
+    for (const step of uniqueSteps) {
+      const { feature, created: featureCreated } = await getOrCreateFeature(
+        client,
+        project,
+        iterationPath,
+        areaPath,
+        epic.id!,
+        step.title,
+        stage.title
+      );
+
+      if (featureCreated) {
+        featureCount++;
+      } else if (feature.id) {
+        await client.updateWorkItem({
+          project,
+          workItemId: feature.id,
+          description: buildProcessFeatureDescription(step, stage.title),
+          iterationPath,
+          areaPath,
+        });
+      }
+
+      const { story, created: storyCreated } = await getOrCreateProcessStory(
+        client,
+        project,
+        iterationPath,
+        areaPath,
+        feature.id!,
+        step,
+        stage.title,
+        evidenceContent,
+        storyMaturity,
+        designReferences
+      );
+
+      if (storyCreated) {
+        storyCount++;
+      }
+
+      const processTaskTitles = storyMaturity === "placeholder"
+        ? [
+          `Run fit-gap for ${step.title}`,
+          `Link design artefacts for ${step.title}`,
+          `Refine placeholder into implementation story for ${step.title}`,
+        ]
+        : [
+          `Analyse requirements for ${step.title}`,
+          `Design and implement ${step.title}`,
+          `Test and validate ${step.title}`,
+        ];
+
+      taskCount += await createMissingTasks(client, project, iterationPath, areaPath, story.id!, step.title, processTaskTitles);
+    }
+  }
+
+  logger.info("Process-first backlog creation complete", { epicCount, featureCount, storyCount, taskCount, storyMaturity });
+  return JSON.stringify({
+    result: "success",
+    analysisMode: "process",
+    storyMaturity,
+    epics: epicCount,
+    features: featureCount,
+    userStories: storyCount,
+    tasks: taskCount,
+  });
+}
+
 async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput): Promise<string> {
   const backlogStore = getFileStore();
-  const backlogCached = backlogStore.get(`__analysis_${input.fileName}`);
+  const analysisFileName = input.processFileName || input.fileName;
+  if (!analysisFileName) {
+    return JSON.stringify({
+      result: "error",
+      message: "Provide processFileName (preferred) or fileName after analyse_document.",
+    });
+  }
+
+  const backlogCached = backlogStore.get(`__analysis_${analysisFileName}`);
   if (!backlogCached) {
     return JSON.stringify({ result: "error", message: "No analysis found. Call analyse_document first." });
   }
-  const uploadedFile = backlogStore.get(input.fileName!);
-  const backlogThemes: Record<string, { mentions: number; subtopics: string[] }> = JSON.parse(backlogCached.content);
+  const uploadedFile = backlogStore.get(input.fileName || analysisFileName);
+  const storedAnalysis = parseStoredAnalysis(backlogCached.content);
+
+  if (storedAnalysis.analysisMode === "process") {
+    return handleCreateBacklogFromProcess(client, input, storedAnalysis, analysisFileName);
+  }
+
+  const backlogThemes: Record<string, { mentions: number; subtopics: string[] }> = storedAnalysis.themes ?? {};
   const project = input.project;
   const iterationPath = `${project}\\Backlog`;
   const areaPath = input.areaPath || project;

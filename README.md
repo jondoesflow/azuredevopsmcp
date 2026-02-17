@@ -5,7 +5,7 @@ A Model Context Protocol (MCP) server that integrates with Azure DevOps to manag
 ## Features
 
 - **19 MCP tools** — Create, list, update, and query work items + document analysis + automated backlog creation
-- **Automated backlog creation** — Upload a document, analyse it into themes, and create a full backlog (Epics → Features → User Stories → Tasks) in one operation
+- **Automated backlog creation** — Supports process-first discovery backlogs (recommended) and legacy transcript/theme backlogs
 - **Gherkin acceptance criteria** — User stories include Given/When/Then acceptance criteria
 - **MoSCoW prioritisation** — User story descriptions include MoSCoW priority ratings
 - **File upload pipeline** — Accept file uploads from Copilot Studio via Power Automate, with automatic base64 decoding
@@ -68,9 +68,9 @@ See [SETUP-GUIDE.md](mcp-server/SETUP-GUIDE.md) for the full walkthrough, or [AZ
 | `delete_file` | Deletes an uploaded file from the server |
 | `get_file_content` | Returns file metadata and chunk info |
 | `get_file_chunk` | Returns a specific chunk of a large file |
-| `analyse_document` | Analyses a document server-side, extracts themes and subtopics |
+| `analyse_document` | Analyses a document in `process` mode (recommended) or `themes` mode (legacy) |
 | `get_theme_details` | Returns subtopics for a specific theme |
-| `create_backlog` | Creates a full backlog (Epics/Features/User Stories/Tasks) from an analysed document |
+| `create_backlog` | Creates a process-first or legacy backlog from an analysed document |
 
 ## How It Works
 
@@ -78,17 +78,22 @@ See [SETUP-GUIDE.md](mcp-server/SETUP-GUIDE.md) for the full walkthrough, or [AZ
 User uploads document in Copilot Studio
   → Topic triggers Power Automate flow
   → Flow POSTs file to MCP server /upload endpoint
-  → Agent calls analyse_document (extracts themes server-side)
-  → Agent calls create_backlog (creates all work items in one operation)
+  → Agent calls analyse_document (prefer `analysisMode=process` for To-Be process maps)
+  → Agent calls create_backlog (process-first placeholders by default, legacy themes still supported)
   → Agent reports: "Backlog created: X epics, X features, X user stories, X tasks"
 ```
 
 ### Work Item Format
-- **Epic**: One per theme
-- **Feature**: One per subtopic, linked to epic
-- **User Story**: Title is short summary, description contains "As a... I want... so that..." + MoSCoW priority
-- **Acceptance Criteria**: Gherkin format (Given/When/Then)
-- **Tasks**: 3 per user story (Analyse / Design & implement / Test & validate)
+- **Process-first mode (recommended)**:
+  - Epic = process stage
+  - Feature = capability/process step
+  - User Story = discovery placeholder by default (`storyMaturity=placeholder`) with fit-gap/provenance context
+  - Tasks = fit-gap, design-linking, and refinement tasks
+- **Legacy themes mode (backward compatible)**:
+  - Epic = theme
+  - Feature = subtopic
+  - User Story = detailed implementation story with MoSCoW + Gherkin acceptance criteria
+  - Tasks = analyse/design-test trio
 
 ## Environment Variables
 
