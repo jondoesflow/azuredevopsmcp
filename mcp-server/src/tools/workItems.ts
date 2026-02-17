@@ -444,6 +444,18 @@ export const workItemTools: Tool[] = [
           type: "string",
           description: "Azure DevOps project name.",
         },
+        iterationPath: {
+          type: "string",
+          description: "Optional Azure DevOps iteration path. Defaults to <Project>\\Sprint 0.",
+        },
+        areaPath: {
+          type: "string",
+          description: "Optional Azure DevOps area path. Defaults to project root area.",
+        },
+        persona: {
+          type: "string",
+          description: "Optional persona used in generated user story wording (for example: salesperson).",
+        },
       },
       required: ["fileName", "project"],
     },
@@ -483,6 +495,8 @@ export const workItemTools: Tool[] = [
 interface ToolInput {
   project: string;
   iterationPath?: string;
+  areaPath?: string;
+  persona?: string;
   state?: string;
   assignedTo?: string;
   epic?: number;
@@ -770,42 +784,50 @@ function findWorkItemByTitle(
   items: Array<{ id?: number; fields?: { [key: string]: unknown } }>,
   title: string
 ): { id?: number; fields?: { [key: string]: unknown } } | undefined {
-  const target = title.trim().toLowerCase();
+  const target = normaliseTitle(title);
   return items.find((item) => {
     const itemTitle = item.fields?.["System.Title"];
-    return typeof itemTitle === "string" && itemTitle.trim().toLowerCase() === target;
+    return typeof itemTitle === "string" && normaliseTitle(itemTitle) === target;
   });
+}
+
+function normaliseTitle(value: string): string {
+  return value.trim().toLowerCase().replaceAll(/[^a-z0-9]+/g, " ").trim();
 }
 
 function buildEpicDescription(themeName: string, subtopics: string[]): string {
   const featureListHtml = subtopics.map((s) => `<li>${s}</li>`).join("");
   return [
     `<strong>${themeName}</strong><br/><br/>`,
+    `This epic summarizes the key delivery areas for ${themeName.toLowerCase()} and provides a consolidated view of expected outcomes.<br/><br/>`,
     `This epic covers the following features:<br/>`,
     `<ul>${featureListHtml}</ul>`,
   ].join("");
 }
 
 function buildFeatureDescription(subtopic: string, themeName: string): string {
+  const storyTitle = `Implement ${subtopic}`;
   return [
     `<strong>${subtopic}</strong> — part of ${themeName}<br/><br/>`,
+    `This feature delivers ${subtopic.toLowerCase()} capability within ${themeName.toLowerCase()} and groups the implementation scope needed to make this outcome usable by delivery teams.<br/><br/>`,
     `This feature includes the following user story:<br/>`,
-    `<ul><li>Implement ${subtopic.toLowerCase()} capability to support ${themeName.toLowerCase()} requirements</li></ul>`,
+    `<ul><li>${storyTitle}</li></ul>`,
   ].join("");
 }
 
-function buildStoryDescription(subtopic: string, themeName: string): string {
+function buildStoryDescription(subtopic: string, themeName: string, persona: string): string {
   return [
-    `I want ${subtopic.toLowerCase()} so that the system supports ${themeName.toLowerCase()} requirements.<br/><br/>`,
-    `As a user, I need the ability to utilise ${subtopic.toLowerCase()} from within the system, `,
-    `so that I can effectively manage ${themeName.toLowerCase()} processes and workflows.`,
+    `<strong>User Story</strong><br/>`,
+    `As a ${persona}, I need the ability to utilise ${subtopic.toLowerCase()} from within the system, `,
+    `so that I can effectively manage ${themeName.toLowerCase()} processes and workflows.<br/><br/>`,
+    `<strong>Context</strong><br/>Theme: ${themeName}`,
   ].join("");
 }
 
-function buildGherkinCriteria(subtopic: string, themeName: string): string[] {
+function buildGherkinCriteria(subtopic: string, themeName: string, persona: string): string[] {
   return [
     `Given the ${themeName.toLowerCase()} module is available`,
-    `When a user interacts with ${subtopic.toLowerCase()}`,
+    `When the ${persona} interacts with ${subtopic.toLowerCase()}`,
     `Then the system should process the request successfully`,
     `And the result should be visible to the user`,
   ];
@@ -816,11 +838,21 @@ async function getOrCreateEpic(
   existingEpics: Array<{ id?: number; fields?: { [key: string]: unknown } }>,
   project: string,
   iterationPath: string,
+  areaPath: string,
   themeName: string,
   uniqueSubtopics: string[]
 ): Promise<{ epic: { id?: number; fields?: { [key: string]: unknown } }; created: boolean }> {
   const existingEpic = findWorkItemByTitle(existingEpics, themeName);
   if (existingEpic) {
+    if (existingEpic.id) {
+      await client.updateWorkItem({
+        project,
+        workItemId: existingEpic.id,
+        description: buildEpicDescription(themeName, uniqueSubtopics),
+        iterationPath,
+        areaPath,
+      });
+    }
     logger.info("Reusing existing epic", { id: existingEpic.id, title: themeName });
     return { epic: existingEpic, created: false };
   }
@@ -831,6 +863,7 @@ async function getOrCreateEpic(
     title: themeName,
     description: buildEpicDescription(themeName, uniqueSubtopics),
     iterationPath,
+    areaPath,
   });
   existingEpics.unshift(epic);
   logger.info("Created epic", { id: epic.id, title: themeName });
@@ -841,6 +874,7 @@ async function getOrCreateFeature(
   client: AzureDevOpsClient,
   project: string,
   iterationPath: string,
+  areaPath: string,
   epicId: number,
   subtopic: string,
   themeName: string
@@ -848,6 +882,15 @@ async function getOrCreateFeature(
   const existingFeatures = await client.listWorkItems({ project, witType: "Feature", parentId: epicId, top: 1000 });
   const existingFeature = findWorkItemByTitle(existingFeatures, subtopic);
   if (existingFeature) {
+    if (existingFeature.id) {
+      await client.updateWorkItem({
+        project,
+        workItemId: existingFeature.id,
+        description: buildFeatureDescription(subtopic, themeName),
+        iterationPath,
+        areaPath,
+      });
+    }
     logger.info("Reusing existing feature", { id: existingFeature.id, title: subtopic, parentEpicId: epicId });
     return { feature: existingFeature, created: false };
   }
@@ -859,6 +902,7 @@ async function getOrCreateFeature(
     description: buildFeatureDescription(subtopic, themeName),
     parentId: epicId,
     iterationPath,
+    areaPath,
   });
   return { feature, created: true };
 }
@@ -867,14 +911,28 @@ async function getOrCreateStory(
   client: AzureDevOpsClient,
   project: string,
   iterationPath: string,
+  areaPath: string,
   featureId: number,
   subtopic: string,
-  themeName: string
+  themeName: string,
+  persona: string
 ): Promise<{ story: { id?: number; fields?: { [key: string]: unknown } }; created: boolean }> {
   const storyTitle = `Implement ${subtopic}`;
   const existingStories = await client.listWorkItems({ project, witType: "User Story", parentId: featureId, top: 1000 });
-  const existingStory = findWorkItemByTitle(existingStories, storyTitle);
+  const existingStory = findWorkItemByTitle(existingStories, storyTitle) || findWorkItemByTitle(existingStories, subtopic);
   if (existingStory) {
+    if (existingStory.id) {
+      await client.updateWorkItem({
+        project,
+        workItemId: existingStory.id,
+        title: storyTitle,
+        description: buildStoryDescription(subtopic, themeName, persona),
+        acceptanceCriteria: buildGherkinCriteria(subtopic, themeName, persona),
+        moscow: "Must",
+        iterationPath,
+        areaPath,
+      });
+    }
     logger.info("Reusing existing user story", { id: existingStory.id, title: storyTitle, parentFeatureId: featureId });
     return { story: existingStory, created: false };
   }
@@ -883,11 +941,12 @@ async function getOrCreateStory(
     project,
     witType: "User Story",
     title: storyTitle,
-    description: buildStoryDescription(subtopic, themeName),
+    description: buildStoryDescription(subtopic, themeName, persona),
     parentId: featureId,
-    acceptanceCriteria: buildGherkinCriteria(subtopic, themeName),
+    acceptanceCriteria: buildGherkinCriteria(subtopic, themeName, persona),
     moscow: "Must",
     iterationPath,
+    areaPath,
   });
   return { story, created: true };
 }
@@ -896,6 +955,7 @@ async function createMissingTasks(
   client: AzureDevOpsClient,
   project: string,
   iterationPath: string,
+  areaPath: string,
   storyId: number,
   subtopic: string
 ): Promise<number> {
@@ -910,6 +970,14 @@ async function createMissingTasks(
   for (const taskTitle of taskTitles) {
     const existingTask = findWorkItemByTitle(existingTasks, taskTitle);
     if (existingTask) {
+      if (existingTask.id) {
+        await client.updateWorkItem({
+          project,
+          workItemId: existingTask.id,
+          iterationPath,
+          areaPath,
+        });
+      }
       logger.info("Reusing existing task", { id: existingTask.id, title: taskTitle, parentStoryId: storyId });
       continue;
     }
@@ -920,6 +988,7 @@ async function createMissingTasks(
       title: taskTitle,
       parentId: storyId,
       iterationPath,
+      areaPath,
     });
     createdTasks++;
   }
@@ -935,7 +1004,9 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
   }
   const backlogThemes: Record<string, { mentions: number; subtopics: string[] }> = JSON.parse(backlogCached.content);
   const project = input.project;
-  const iterationPath = input.iterationPath || String.raw`${project}\Route`;
+  const iterationPath = input.iterationPath || `${project}\\Sprint 0`;
+  const areaPath = input.areaPath || project;
+  const persona = input.persona || "user";
 
   let epicCount = 0;
   let featureCount = 0;
@@ -953,6 +1024,7 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
       existingEpics,
       project,
       iterationPath,
+      areaPath,
       themeName,
       uniqueSubtopics
     );
@@ -965,6 +1037,7 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
         client,
         project,
         iterationPath,
+        areaPath,
         epic.id!,
         subtopic,
         themeName
@@ -977,15 +1050,17 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
         client,
         project,
         iterationPath,
+        areaPath,
         feature.id!,
         subtopic,
-        themeName
+        themeName,
+        persona
       );
       if (storyCreated) {
         storyCount++;
       }
 
-      taskCount += await createMissingTasks(client, project, iterationPath, story.id!, subtopic);
+      taskCount += await createMissingTasks(client, project, iterationPath, areaPath, story.id!, subtopic);
     }
   }
 

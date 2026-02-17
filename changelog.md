@@ -2,6 +2,33 @@
 
 This changelog tracks updates **from this point onward**, with a focus on MCP server code and deployment behavior.
 
+## 2026-02-17
+
+### MCP Server (mcp-server)
+- Improved `create_backlog` quality and consistency behavior:
+  - Added optional `iterationPath`, `areaPath`, and `persona` inputs for generated work items.
+  - Updated defaults to use iteration path `Project\\Sprint 0` and area path `Project` when not provided.
+  - Strengthened deduplication with normalized title matching (case/punctuation insensitive).
+  - Added compatibility matching so existing legacy story titles (for example, matching the feature title) are reused and normalized instead of duplicated.
+  - Standardized story description format to include explicit **User Story** and **Context** sections.
+  - Enhanced feature and epic descriptions with clearer summary wording.
+
+### Azure DevOps Client
+- Extended work item create support:
+  - Added `areaPath` support (`/fields/System.AreaPath`) on create.
+- Extended work item update support to normalize reused items during backlog regeneration:
+  - Added support to update title, description, iteration path, area path, MoSCoW, and acceptance criteria.
+- Existing invalid-iteration fallback remains in place: if an iteration path is invalid, create retries without `System.IterationPath`.
+
+### Prompt/Orchestration Alignment
+- Updated Copilot Studio prompt to:
+  - confirm project and iteration path before `create_backlog`
+  - pass `iterationPath` explicitly
+  - enforce strict result formatting and safe metadata-only handling
+
+### Deployment
+- Prepared for next deployment tag after code validation.
+
 ## 2026-02-16
 
 ### MCP Server (mcp-server)

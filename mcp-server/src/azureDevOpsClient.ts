@@ -10,6 +10,7 @@ export interface WorkItemInput {
   title: string;
   description?: string;
   iterationPath?: string;
+  areaPath?: string;
   state?: string;
   assignedTo?: string;
   parentId?: number;
@@ -31,9 +32,14 @@ export interface WorkItemFilter {
 export interface WorkItemUpdate {
   project: string;
   workItemId: number;
+  title?: string;
   state?: string;
   assignedTo?: string;
   description?: string;
+  iterationPath?: string;
+  areaPath?: string;
+  acceptanceCriteria?: string[];
+  moscow?: string;
 }
 
 export class AzureDevOpsClient {
@@ -83,6 +89,14 @@ export class AzureDevOpsClient {
           op: "add",
           path: "/fields/System.IterationPath",
           value: input.iterationPath,
+        });
+      }
+
+      if (input.areaPath) {
+        patchDocument.push({
+          op: "add",
+          path: "/fields/System.AreaPath",
+          value: input.areaPath,
         });
       }
 
@@ -273,6 +287,14 @@ export class AzureDevOpsClient {
       const witApi = await this.getWitApi();
       const patchDocument: any[] = [];
 
+      if (update.title) {
+        patchDocument.push({
+          op: "replace",
+          path: "/fields/System.Title",
+          value: update.title,
+        });
+      }
+
       if (update.state) {
         patchDocument.push({
           op: "replace",
@@ -294,6 +316,39 @@ export class AzureDevOpsClient {
           op: "replace",
           path: "/fields/System.Description",
           value: update.description,
+        });
+      }
+
+      if (update.iterationPath) {
+        patchDocument.push({
+          op: "replace",
+          path: "/fields/System.IterationPath",
+          value: update.iterationPath,
+        });
+      }
+
+      if (update.areaPath) {
+        patchDocument.push({
+          op: "replace",
+          path: "/fields/System.AreaPath",
+          value: update.areaPath,
+        });
+      }
+
+      if (update.acceptanceCriteria && update.acceptanceCriteria.length > 0) {
+        const criteriaText = update.acceptanceCriteria.map((c) => `${c}<br/>`).join("");
+        patchDocument.push({
+          op: "replace",
+          path: "/fields/Microsoft.VSTS.Common.AcceptanceCriteria",
+          value: criteriaText,
+        });
+      }
+
+      if (update.moscow) {
+        patchDocument.push({
+          op: "replace",
+          path: "/fields/Custom.MoSCoW",
+          value: update.moscow,
         });
       }
 

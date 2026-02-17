@@ -81,6 +81,13 @@ The `create_backlog` tool creates:
 - **Acceptance Criteria** — Gherkin format (Given/When/Then/And)
 - **Tasks** — 3 per story (Analyse / Design & implement / Test & validate)
 
+Additional backlog behaviors:
+- **Deduplication** — Matching is normalized (case/punctuation insensitive) to reduce duplicates across reruns
+- **Legacy story normalization** — Existing story titles that match subtopic names are reused and updated to `Implement ...`
+- **Consistency updates on rerun** — Reused Epics/Features/User Stories/Tasks are updated with current description and path formatting
+- **Default iteration** — `Project\\Sprint 0` (can be overridden via `create_backlog.iterationPath`)
+- **Default area path** — `Project` (can be overridden via `create_backlog.areaPath`)
+
 ## Environment Variables
 
 | Variable | Required | Description |
