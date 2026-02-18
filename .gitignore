@@ -3,3 +3,6 @@ dist/
 .env
 .env.local
 *.log
+
+# Local deployment/debug artifacts
+aci-logs.txt
