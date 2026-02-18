@@ -1,5 +1,6 @@
 import { AzureDevOpsClient } from "../azureDevOpsClient.js";
 import { logger } from "../logger.js";
+import { JiraClient } from "../jiraClient.js";
 
 // Strip HTML tags and decode entities to plain text
 function stripHtml(html: string | undefined | null): string {
@@ -18,6 +19,20 @@ function stripHtml(html: string | undefined | null): string {
 
 type AnalysisMode = "themes" | "process";
 type StoryMaturity = "placeholder" | "detailed";
+type TargetSystem = "azuredevops" | "jira";
+
+interface RubricAssessment {
+  id: string;
+  name: string;
+  mentions: number;
+  signals: string[];
+}
+
+function parseTargetSystem(raw: unknown): TargetSystem {
+  const lowered = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (lowered === "jira") return "jira";
+  return "azuredevops";
+}
 
 interface ProcessStep {
   title: string;
@@ -34,6 +49,7 @@ interface StoredAnalysis {
   analysisMode: AnalysisMode;
   themes?: Record<string, { mentions: number; subtopics: string[] }>;
   processStages?: ProcessStage[];
+  rubrics?: RubricAssessment[];
 }
 
 // Truncate text to avoid large payloads triggering content filters
@@ -44,6 +60,138 @@ function truncate(text: string, max: number = 200): string {
 
 function toSingleLine(value: string): string {
   return value.replaceAll(/[\r\n]+/g, " ").replaceAll(/\s+/g, " ").trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const RUBRIC_DIMENSIONS: Array<{ id: string; name: string; keywords: string[] }> = [
+  { id: "roles", name: "Roles & responsibilities", keywords: ["role", "persona", "dispatcher", "manager", "engineer", "admin", "approver"] },
+  { id: "workflow", name: "Workflows & approvals", keywords: ["workflow", "approval", "validate", "exception", "handover", "escalation", "status"] },
+  { id: "data", name: "Data model & quality", keywords: ["data", "master data", "attribute", "mandatory", "validation", "duplicate", "audit", "history"] },
+  { id: "integration", name: "Integrations & interfaces", keywords: ["integration", "interface", "api", "webhook", "sync", "oracle", "erp", "sap", "gis"] },
+  { id: "reporting", name: "Reporting & analytics", keywords: ["report", "dashboard", "kpi", "metric", "power bi", "analytics", "insight"] },
+  { id: "security", name: "Security & access control", keywords: ["security", "permission", "access", "rbac", "least privilege", "encryption", "sso", "mfa"] },
+  { id: "compliance", name: "Compliance & audit", keywords: ["compliance", "audit", "regulation", "gdpr", "retention", "cni"] },
+  { id: "nfr", name: "Non-functional requirements", keywords: ["performance", "latency", "availability", "resilience", "scalability", "sla", "offline"] },
+  { id: "ux", name: "UX & usability", keywords: ["ux", "user experience", "usability", "mobile", "tablet", "field", "offline"] },
+  { id: "edge_cases", name: "Exceptions & edge cases", keywords: ["edge case", "exception", "workaround", "manual", "fallback", "error"] },
+];
+
+function assessRubrics(content: string): RubricAssessment[] {
+  const lower = content.toLowerCase();
+  return RUBRIC_DIMENSIONS.map((dim) => {
+    let mentions = 0;
+    const signals: string[] = [];
+    for (const keyword of dim.keywords) {
+      const pattern = new RegExp(`\\b${escapeRegExp(keyword.toLowerCase())}\\b`, "g");
+      const matches = lower.match(pattern);
+      const count = matches ? matches.length : 0;
+      if (count > 0) {
+        mentions += count;
+        if (signals.length < 5) signals.push(keyword);
+      }
+    }
+    return { id: dim.id, name: dim.name, mentions, signals };
+  }).sort((a, b) => b.mentions - a.mentions);
+}
+
+function buildRubricAcceptanceCriteria(rubrics: RubricAssessment[] | undefined): string[] {
+  const relevant = (rubrics ?? []).filter((r) => r.mentions > 0).slice(0, 4);
+  if (relevant.length === 0) return [];
+
+  const criteria: string[] = [];
+  for (const item of relevant) {
+    switch (item.id) {
+      case "security":
+        criteria.push("And access is controlled by role-based permissions");
+        break;
+      case "compliance":
+        criteria.push("And key actions are auditable with timestamped history");
+        break;
+      case "integration":
+        criteria.push("And required integrations/interfaces are identified for this capability");
+        break;
+      case "reporting":
+        criteria.push("And the outcome is reportable via dashboards/exports where required");
+        break;
+      case "nfr":
+        criteria.push("And performance/availability expectations are defined and testable");
+        break;
+      case "edge_cases":
+        criteria.push("And exception paths and error handling are defined");
+        break;
+      case "data":
+        criteria.push("And data validation rules and required fields are defined");
+        break;
+      case "workflow":
+        criteria.push("And workflow status transitions and approval gates are defined");
+        break;
+      default:
+        break;
+    }
+  }
+
+  return Array.from(new Set(criteria));
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+interface ProvenanceInfo {
+  sourceFileName: string;
+  sourceType: "transcript" | "process";
+  reference: string;
+  excerpt?: string;
+}
+
+function selectBestExcerpt(content: string, terms: string[], maxChars: number = 260): string | undefined {
+  const trimmed = content.trim();
+  if (!trimmed) return undefined;
+
+  const lines = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  if (lines.length === 0) return undefined;
+
+  const loweredTerms = terms
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+    .map((t) => t.toLowerCase());
+
+  const index = loweredTerms.length === 0
+    ? 0
+    : lines.findIndex((line) => {
+      const lower = line.toLowerCase();
+      return loweredTerms.some((term) => lower.includes(term));
+    });
+
+  const bestIndex = index >= 0 ? index : 0;
+  const excerpt = [lines[bestIndex - 1], lines[bestIndex], lines[bestIndex + 1]]
+    .filter((line): line is string => Boolean(line))
+    .join(" ");
+
+  return truncate(toSingleLine(excerpt), maxChars);
+}
+
+function buildProvenanceHtml(info: ProvenanceInfo): string {
+  const excerptPart = info.excerpt ? ` — \"${escapeHtml(info.excerpt)}\"` : "";
+  return `<br/><br/><em>Source: ${escapeHtml(info.sourceFileName)} (${info.sourceType}) — ${escapeHtml(info.reference)}${excerptPart}</em>`;
+}
+
+function buildProvenanceText(info: ProvenanceInfo): string {
+  const excerptPart = info.excerpt ? ` — "${toSingleLine(info.excerpt)}"` : "";
+  // Jira Wiki-style italics
+  return `_Source: ${info.sourceFileName} (${info.sourceType}) — ${info.reference}${excerptPart}_`;
 }
 
 export interface Tool {
@@ -343,7 +491,7 @@ export const workItemTools: Tool[] = [
   },
   {
     name: "process_transcript",
-    description: "Stores an uploaded file for processing. Provide fileContent as plain text or base64 string. Alternatively provide contentUrl which is a data URI like data:text/plain;base64,... from an attachment.",
+    description: "Stores an uploaded file for processing. By default returns metadata only (no transcript preview). Provide fileContent as plain text or base64 string. Alternatively provide contentUrl which is a data URI like data:text/plain;base64,... from an attachment. Set includePreview=true only when you explicitly need a snippet.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -362,6 +510,10 @@ export const workItemTools: Tool[] = [
         contentType: {
           type: "string",
           description: "MIME type of the file.",
+        },
+        includePreview: {
+          type: "boolean",
+          description: "If true, includes a short preview snippet in the response. Off by default to avoid leaking sensitive content.",
         },
       },
       required: ["fileName"],
@@ -392,7 +544,7 @@ export const workItemTools: Tool[] = [
   },
   {
     name: "get_file_content",
-    description: "Returns the full file content if under 100K characters. For larger files, returns metadata and total chunks. Use get_file_chunk to read each chunk of large files.",
+    description: "Returns stored file content ONLY when explicitly requested (includeContent=true). By default returns metadata only to avoid leaking sensitive content. For large files, use get_file_chunk with includeContent=true.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -400,13 +552,21 @@ export const workItemTools: Tool[] = [
           type: "string",
           description: "Name of the file to retrieve.",
         },
+        includeContent: {
+          type: "boolean",
+          description: "If true, includes the full file content in the response (may trigger content filtering). Defaults to false.",
+        },
+        includePreview: {
+          type: "boolean",
+          description: "If true, includes a short preview snippet in the response (may trigger content filtering). Defaults to false.",
+        },
       },
       required: ["fileName"],
     },
   },
   {
     name: "get_file_chunk",
-    description: "Returns one chunk of a stored file by index.",
+    description: "Returns one chunk of a stored file by index ONLY when explicitly requested (includeContent=true). By default returns metadata only to avoid leaking sensitive content.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -417,6 +577,10 @@ export const workItemTools: Tool[] = [
         chunkIndex: {
           type: "number",
           description: "Zero-based chunk index.",
+        },
+        includeContent: {
+          type: "boolean",
+          description: "If true, includes the chunk content in the response (may trigger content filtering). Defaults to false.",
         },
       },
       required: ["fileName", "chunkIndex"],
@@ -464,6 +628,10 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
+        targetSystem: {
+          type: "string",
+          description: "Target system for created work items: 'azuredevops' (default) or 'jira'.",
+        },
         fileName: {
           type: "string",
           description: "Legacy analysed file name. Backward compatible alias when processFileName is not provided.",
@@ -489,7 +657,7 @@ export const workItemTools: Tool[] = [
         },
         project: {
           type: "string",
-          description: "Azure DevOps project name.",
+          description: "Target project identifier. For Azure DevOps: project name. For Jira: project key (e.g., 'ABC').",
         },
         areaPath: {
           type: "string",
@@ -533,6 +701,7 @@ export const workItemTools: Tool[] = [
 
 interface ToolInput {
   project: string;
+  targetSystem?: string;
   analysisMode?: AnalysisMode;
   iterationPath?: string;
   areaPath?: string;
@@ -560,6 +729,27 @@ interface ToolInput {
   contentType?: string;
   themeName?: string;
   chunkIndex?: number;
+  includeContent?: boolean;
+  includePreview?: boolean;
+}
+
+interface WorkItemClients {
+  azureDevOpsClient?: AzureDevOpsClient;
+  jiraClient?: JiraClient;
+}
+
+function requireAzureClient(clients: WorkItemClients): AzureDevOpsClient {
+  if (!clients.azureDevOpsClient) {
+    throw new Error("Azure DevOps client is not configured on this server. Set AZURE_DEVOPS_ORG, AZURE_DEVOPS_PAT, and AZURE_DEVOPS_URL.");
+  }
+  return clients.azureDevOpsClient;
+}
+
+function requireJiraClient(clients: WorkItemClients): JiraClient {
+  if (!clients.jiraClient) {
+    throw new Error("Jira client is not configured on this server. Set JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN.");
+  }
+  return clients.jiraClient;
 }
 
 // --- Extracted handlers to reduce cognitive complexity of handleWorkItemTool ---
@@ -594,8 +784,9 @@ async function resolveContentUrl(url: string, fileName: string): Promise<{ conte
       const content = await response.text();
       logger.info("Fetched content from URL", { fileName, size: content.length });
       return { content, contentType: "text/plain" };
-    } catch (err: any) {
-      return JSON.stringify({ result: "error", message: "Failed to fetch file from URL: " + err.message });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      return JSON.stringify({ result: "error", message: "Failed to fetch file from URL: " + message });
     }
   }
   return JSON.stringify({ result: "error", message: "contentUrl must be a data: URI or http(s) URL" });
@@ -630,7 +821,12 @@ async function handleProcessTranscript(input: ToolInput, fileStore: ReturnType<t
 
   fileStore.set(fileName, { name: fileName, content, mimeType: contentType, uploadedAt: new Date() });
   logger.info("File stored", { fileName, size: content.length, contentType });
-  return JSON.stringify({ result: "success", fileName, size: content.length, contentType, preview: truncate(content, 500) });
+
+  const response: Record<string, unknown> = { result: "success", fileName, size: content.length, contentType };
+  if (input.includePreview === true) {
+    response.preview = truncate(content, 500);
+  }
+  return JSON.stringify(response);
 }
 
 const THEME_CONFIG: Record<string, { keywords: string[]; subtopicLabels: Record<string, string[]> }> = {
@@ -895,12 +1091,15 @@ function handleAnalyseDocument(input: ToolInput): string {
   logger.info("Analysing document server-side", { fileName: file.name, size: file.content.length });
 
   const analysisMode = parseAnalysisMode(input.analysisMode);
+  const rubrics = assessRubrics(file.content);
+  const rubricSummary = rubrics.filter((r) => r.mentions > 0).slice(0, 8);
 
   if (analysisMode === "process") {
     const processStages = analyseProcessDocument(file.content);
     const analysis: StoredAnalysis = {
       analysisMode,
       processStages,
+      rubrics,
     };
     fileStore.set(`__analysis_${file.name}`, {
       name: `__analysis_${file.name}`,
@@ -921,6 +1120,8 @@ function handleAnalyseDocument(input: ToolInput): string {
       fileName: file.name,
       stagesFound: stageSummary.length,
       stages: stageSummary,
+      rubricsFound: rubricSummary.length,
+      rubrics: rubricSummary,
     });
   }
 
@@ -944,6 +1145,7 @@ function handleAnalyseDocument(input: ToolInput): string {
   const analysis: StoredAnalysis = {
     analysisMode,
     themes: finalThemes,
+    rubrics,
   };
 
   fileStore.set(`__analysis_${file.name}`, {
@@ -954,7 +1156,16 @@ function handleAnalyseDocument(input: ToolInput): string {
   });
 
   const themeList = Object.entries(finalThemes).map(([name, d]) => ({ name, mentions: d.mentions, subtopicCount: d.subtopics.length }));
-  return JSON.stringify({ result: "success", analysisMode, fileName: file.name, totalLines, themesFound: themeList.length, themes: themeList });
+  return JSON.stringify({
+    result: "success",
+    analysisMode,
+    fileName: file.name,
+    totalLines,
+    themesFound: themeList.length,
+    themes: themeList,
+    rubricsFound: rubricSummary.length,
+    rubrics: rubricSummary,
+  });
 }
 
 function handleGetThemeDetails(input: ToolInput): string {
@@ -1051,13 +1262,15 @@ function buildFeatureDescription(subtopic: string, themeName: string): string {
   ].join("");
 }
 
-function buildStoryDescription(subtopic: string, themeName: string, persona: string): string {
-  return [
+function buildStoryDescription(subtopic: string, themeName: string, persona: string, provenance?: ProvenanceInfo): string {
+  const base = [
     `<strong>User Story</strong><br/>`,
     `As a ${persona}, I need the ability to utilise ${subtopic.toLowerCase()} from within the system, `,
     `so that I can effectively manage ${themeName.toLowerCase()} processes and workflows.<br/><br/>`,
     `<strong>Context</strong><br/>Theme: ${themeName}`,
   ].join("");
+
+  return provenance ? base + buildProvenanceHtml(provenance) : base;
 }
 
 function buildGherkinCriteria(subtopic: string, themeName: string, persona: string): string[] {
@@ -1151,19 +1364,30 @@ async function getOrCreateStory(
   featureId: number,
   subtopic: string,
   themeName: string,
-  persona: string
+  persona: string,
+  sourceFileName: string,
+  sourceContent: string,
+  extraAcceptanceCriteria: string[]
 ): Promise<{ story: { id?: number; fields?: { [key: string]: unknown } }; created: boolean }> {
   const storyTitle = `Implement ${subtopic}`;
   const existingStories = await client.listWorkItems({ project, witType: "User Story", parentId: featureId, top: 1000 });
   const existingStory = findWorkItemByTitle(existingStories, storyTitle) || findWorkItemByTitle(existingStories, subtopic);
+
+  const provenance: ProvenanceInfo = {
+    sourceFileName,
+    sourceType: "transcript",
+    reference: `Theme: ${themeName}; Subtopic: ${subtopic}`,
+    excerpt: selectBestExcerpt(sourceContent, [subtopic, themeName]),
+  };
+
   if (existingStory) {
     if (existingStory.id) {
       await client.updateWorkItem({
         project,
         workItemId: existingStory.id,
         title: storyTitle,
-        description: buildStoryDescription(subtopic, themeName, persona),
-        acceptanceCriteria: buildGherkinCriteria(subtopic, themeName, persona),
+        description: buildStoryDescription(subtopic, themeName, persona, provenance),
+        acceptanceCriteria: [...buildGherkinCriteria(subtopic, themeName, persona), ...extraAcceptanceCriteria],
         moscow: "Must",
         iterationPath,
         areaPath,
@@ -1177,9 +1401,9 @@ async function getOrCreateStory(
     project,
     witType: "User Story",
     title: storyTitle,
-    description: buildStoryDescription(subtopic, themeName, persona),
+    description: buildStoryDescription(subtopic, themeName, persona, provenance),
     parentId: featureId,
-    acceptanceCriteria: buildGherkinCriteria(subtopic, themeName, persona),
+    acceptanceCriteria: [...buildGherkinCriteria(subtopic, themeName, persona), ...extraAcceptanceCriteria],
     moscow: "Must",
     iterationPath,
     areaPath,
@@ -1276,7 +1500,8 @@ function buildPlaceholderStoryDescription(
   stageTitle: string,
   persona: string,
   evidenceSnippets: string[],
-  designReferences: string[]
+  designReferences: string[],
+  provenance?: ProvenanceInfo
 ): string {
   const evidenceSection = evidenceSnippets.length > 0
     ? `<strong>Provenance snippets</strong><br/><ul>${evidenceSnippets.map((snippet) => `<li>${snippet}</li>`).join("")}</ul><br/>`
@@ -1286,13 +1511,15 @@ function buildPlaceholderStoryDescription(
     ? `<strong>Design references</strong><br/><ul>${designReferences.map((ref) => `<li>${ref}</li>`).join("")}</ul><br/>`
     : "<strong>Design references</strong><br/>To be linked during fit-gap and solution design.<br/><br/>";
 
-  return [
+  const base = [
     "<strong>Discovery placeholder story</strong><br/>",
     `As a ${persona}, I need clarity on <strong>${step.title.toLowerCase()}</strong> in stage <strong>${stageTitle}</strong>, so that fit-gap and design decisions can be completed before implementation.<br/><br/>`,
     "<strong>Status</strong><br/>Fit-gap assessment: Unassessed<br/>",
     evidenceSection,
     designSection,
   ].join("");
+
+  return provenance ? base + buildProvenanceHtml(provenance) : base;
 }
 
 async function getOrCreateProcessStory(
@@ -1303,9 +1530,12 @@ async function getOrCreateProcessStory(
   featureId: number,
   step: ProcessStep,
   stageTitle: string,
+  processFileName: string,
+  processContent: string,
   evidenceContent: string,
   storyMaturity: StoryMaturity,
-  designReferences: string[]
+  designReferences: string[],
+  extraAcceptanceCriteria: string[]
 ): Promise<{ story: { id?: number; fields?: { [key: string]: unknown } }; created: boolean }> {
   const storyTitle = storyMaturity === "placeholder" ? `Discovery placeholder: ${step.title}` : `Implement ${step.title}`;
   const existingStories = await client.listWorkItems({ project, witType: "User Story", parentId: featureId, top: 1000 });
@@ -1313,9 +1543,16 @@ async function getOrCreateProcessStory(
   const persona = getBestPersona(step.role, evidenceContent);
   const evidenceSnippets = selectEvidenceSnippets(evidenceContent, step.evidenceTerms);
 
+  const provenance: ProvenanceInfo = {
+    sourceFileName: processFileName,
+    sourceType: "process",
+    reference: `Stage: ${stageTitle}; Step: ${step.title}`,
+    excerpt: selectBestExcerpt(processContent, [step.title, stageTitle]),
+  };
+
   const description = storyMaturity === "placeholder"
-    ? buildPlaceholderStoryDescription(step, stageTitle, persona, evidenceSnippets, designReferences)
-    : buildStoryDescription(step.title, stageTitle, persona);
+    ? buildPlaceholderStoryDescription(step, stageTitle, persona, evidenceSnippets, designReferences, provenance)
+    : buildStoryDescription(step.title, stageTitle, persona, provenance);
 
   const acceptanceCriteria = storyMaturity === "placeholder"
     ? [
@@ -1324,7 +1561,7 @@ async function getOrCreateProcessStory(
       "Then the requirement intent, constraints, and outcomes are clarified",
       "And linked design references are identified before implementation starts",
     ]
-    : buildGherkinCriteria(step.title, stageTitle, persona);
+    : [...buildGherkinCriteria(step.title, stageTitle, persona), ...extraAcceptanceCriteria];
 
   const tags = storyMaturity === "placeholder"
     ? "Discovery;Process-First;FitGap-Unassessed"
@@ -1370,6 +1607,7 @@ async function handleCreateBacklogFromProcess(
   analysisFileName: string
 ): Promise<string> {
   const backlogStore = getFileStore();
+  const processContent = backlogStore.get(analysisFileName)?.content ?? "";
   const processStages = analysis.processStages ?? [];
   if (processStages.length === 0) {
     return JSON.stringify({ result: "error", message: "No process stages found. Re-run analyse_document with analysisMode='process'." });
@@ -1382,6 +1620,7 @@ async function handleCreateBacklogFromProcess(
   const evidenceContent = evidenceFileName ? backlogStore.get(evidenceFileName)?.content ?? "" : "";
   const storyMaturity: StoryMaturity = input.storyMaturity === "detailed" ? "detailed" : "placeholder";
   const designReferences = (input.designReferences ?? []).filter((item) => item.trim().length > 0);
+  const extraAcceptanceCriteria = buildRubricAcceptanceCriteria(analysis.rubrics);
 
   let epicCount = 0;
   let featureCount = 0;
@@ -1453,9 +1692,12 @@ async function handleCreateBacklogFromProcess(
         feature.id!,
         step,
         stage.title,
+        analysisFileName,
+        processContent,
         evidenceContent,
         storyMaturity,
-        designReferences
+        designReferences,
+        extraAcceptanceCriteria
       );
 
       if (storyCreated) {
@@ -1490,6 +1732,199 @@ async function handleCreateBacklogFromProcess(
   });
 }
 
+async function handleCreateBacklogJira(jira: JiraClient, input: ToolInput): Promise<string> {
+  const backlogStore = getFileStore();
+  const analysisFileName = input.processFileName || input.fileName;
+  if (!analysisFileName) {
+    return JSON.stringify({
+      result: "error",
+      message: "Provide processFileName (preferred) or fileName after analyse_document.",
+    });
+  }
+
+  const backlogCached = backlogStore.get(`__analysis_${analysisFileName}`);
+  if (!backlogCached) {
+    return JSON.stringify({ result: "error", message: "No analysis found. Call analyse_document first." });
+  }
+
+  const storedAnalysis = parseStoredAnalysis(backlogCached.content);
+  const projectKey = input.project;
+
+  if (storedAnalysis.analysisMode === "process") {
+    return handleCreateBacklogFromProcessJira(jira, input, storedAnalysis, analysisFileName, projectKey);
+  }
+
+  const themes: Record<string, { mentions: number; subtopics: string[] }> = storedAnalysis.themes ?? {};
+  const sourceContent = backlogStore.get(input.fileName || analysisFileName)?.content ?? "";
+  const persona = detectPersonaFromTranscript(sourceContent);
+  const extraAcceptanceCriteria = buildRubricAcceptanceCriteria(storedAnalysis.rubrics);
+
+  let epicCount = 0;
+  let storyCount = 0;
+
+  for (const [themeName, themeData] of Object.entries(themes)) {
+    const epicSummary = themeName;
+    const existingEpic = await jira.findIssueBySummary(projectKey, "Epic", epicSummary);
+    const epic = existingEpic
+      ?? await jira.createIssue({
+        projectKey,
+        issueType: "Epic",
+        summary: epicSummary,
+        description: `${themeName}\n\nCreated from analysed transcript themes.`,
+        labels: ["mcp", "backlog", "themes"],
+      });
+    if (!existingEpic) epicCount++;
+
+    const uniqueSubtopics = Array.from(new Set(themeData.subtopics));
+    for (const subtopic of uniqueSubtopics) {
+      const storySummary = `Implement ${subtopic}`;
+      const existingStory = await jira.findIssueBySummary(projectKey, "Story", storySummary);
+      if (existingStory) continue;
+
+      const provenance: ProvenanceInfo = {
+        sourceFileName: analysisFileName,
+        sourceType: "transcript",
+        reference: `Theme: ${themeName}; Subtopic: ${subtopic}`,
+        excerpt: selectBestExcerpt(sourceContent, [subtopic, themeName]),
+      };
+
+      const description = [
+        "User Story",
+        `As a ${persona}, I need the ability to utilise ${subtopic.toLowerCase()} so that I can effectively manage ${themeName.toLowerCase()} processes and workflows.`,
+        "",
+        `Context: Theme: ${themeName}`,
+        "",
+        "Acceptance Criteria:",
+        ...[...buildGherkinCriteria(subtopic, themeName, persona), ...extraAcceptanceCriteria].map((c) => `- ${c}`),
+        "",
+        buildProvenanceText(provenance),
+      ].join("\n");
+
+      await jira.createIssue({
+        projectKey,
+        issueType: "Story",
+        summary: storySummary,
+        description,
+        epicKey: epic.key,
+        labels: ["mcp", "backlog", "themes"],
+      });
+      storyCount++;
+    }
+  }
+
+  return JSON.stringify({
+    result: "success",
+    targetSystem: "jira",
+    analysisMode: "themes",
+    epics: epicCount,
+    userStories: storyCount,
+  });
+}
+
+async function handleCreateBacklogFromProcessJira(
+  jira: JiraClient,
+  input: ToolInput,
+  analysis: StoredAnalysis,
+  analysisFileName: string,
+  projectKey: string
+): Promise<string> {
+  const backlogStore = getFileStore();
+  const processStages = analysis.processStages ?? [];
+  const processContent = backlogStore.get(analysisFileName)?.content ?? "";
+  if (processStages.length === 0) {
+    return JSON.stringify({ result: "error", message: "No process stages found. Re-run analyse_document with analysisMode='process'." });
+  }
+
+  const evidenceFileName = input.evidenceFileName || input.fileName;
+  const evidenceContent = evidenceFileName ? backlogStore.get(evidenceFileName)?.content ?? "" : "";
+  const storyMaturity: StoryMaturity = input.storyMaturity === "detailed" ? "detailed" : "placeholder";
+  const designReferences = (input.designReferences ?? []).filter((item) => item.trim().length > 0);
+  const extraAcceptanceCriteria = buildRubricAcceptanceCriteria(analysis.rubrics);
+
+  let epicCount = 0;
+  let storyCount = 0;
+
+  for (const stage of processStages) {
+    const epicSummary = stage.title;
+    const existingEpic = await jira.findIssueBySummary(projectKey, "Epic", epicSummary);
+    const epic = existingEpic
+      ?? await jira.createIssue({
+        projectKey,
+        issueType: "Epic",
+        summary: epicSummary,
+        description: `${stage.title}\n\nTo-Be process stage (process-first discovery).`,
+        labels: ["mcp", "backlog", "process"],
+      });
+    if (!existingEpic) epicCount++;
+
+    const uniqueSteps = Array.from(new Map(stage.steps.map((step) => [normaliseTitle(step.title), step])).values());
+    for (const step of uniqueSteps) {
+      const persona = getBestPersona(step.role, evidenceContent);
+      const evidenceSnippets = selectEvidenceSnippets(evidenceContent, step.evidenceTerms);
+
+      const provenance: ProvenanceInfo = {
+        sourceFileName: analysisFileName,
+        sourceType: "process",
+        reference: `Stage: ${stage.title}; Step: ${step.title}`,
+        excerpt: selectBestExcerpt(processContent, [step.title, stage.title]),
+      };
+
+      const storySummary = storyMaturity === "placeholder"
+        ? `Discovery placeholder: ${step.title}`
+        : `Implement ${step.title}`;
+
+      const existingStory = await jira.findIssueBySummary(projectKey, "Story", storySummary);
+      if (existingStory) continue;
+
+      const description = storyMaturity === "placeholder"
+        ? [
+          "Discovery placeholder story",
+          `As a ${persona}, I need clarity on ${step.title} in stage ${stage.title}, so that fit-gap and design decisions can be completed before implementation.`,
+          "",
+          "Status: Fit-gap assessment: Unassessed",
+          "",
+          "Provenance snippets:",
+          ...(evidenceSnippets.length > 0 ? evidenceSnippets.map((s) => `- ${s}`) : ["- (none linked)"]),
+          "",
+          "Design references:",
+          ...(designReferences.length > 0 ? designReferences.map((r) => `- ${r}`) : ["- (to be linked)"]),
+          "",
+          buildProvenanceText(provenance),
+        ].join("\n")
+        : [
+          "User Story",
+          `As a ${persona}, I need the ability to utilise ${step.title.toLowerCase()} from within the system, so that I can effectively manage ${stage.title.toLowerCase()} processes and workflows.`,
+          "",
+          `Context: Stage: ${stage.title}`,
+          "",
+          "Acceptance Criteria:",
+          ...[...buildGherkinCriteria(step.title, stage.title, persona), ...extraAcceptanceCriteria].map((c) => `- ${c}`),
+          "",
+          buildProvenanceText(provenance),
+        ].join("\n");
+
+      await jira.createIssue({
+        projectKey,
+        issueType: "Story",
+        summary: storySummary,
+        description,
+        epicKey: epic.key,
+        labels: ["mcp", "backlog", "process"],
+      });
+      storyCount++;
+    }
+  }
+
+  return JSON.stringify({
+    result: "success",
+    targetSystem: "jira",
+    analysisMode: "process",
+    storyMaturity,
+    epics: epicCount,
+    userStories: storyCount,
+  });
+}
+
 async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput): Promise<string> {
   const backlogStore = getFileStore();
   const analysisFileName = input.processFileName || input.fileName;
@@ -1516,6 +1951,7 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
   const iterationPath = `${project}\\Backlog`;
   const areaPath = input.areaPath || project;
   const persona = detectPersonaFromTranscript(uploadedFile?.content ?? "");
+  const extraAcceptanceCriteria = buildRubricAcceptanceCriteria(storedAnalysis.rubrics);
 
   let epicCount = 0;
   let featureCount = 0;
@@ -1563,7 +1999,11 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
         feature.id!,
         subtopic,
         themeName,
-        persona
+        persona,
+        analysisFileName,
+        uploadedFile?.content ?? ""
+        ,
+        extraAcceptanceCriteria
       );
       if (storyCreated) {
         storyCount++;
@@ -1578,13 +2018,15 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
 }
 
 export async function handleWorkItemTool(
-  client: AzureDevOpsClient,
+  clients: WorkItemClients,
   toolName: string,
   input: ToolInput
 ): Promise<string> {
   try {
+    const targetSystem = parseTargetSystem(input.targetSystem);
     switch (toolName) {
       case "list_epics": {
+        const client = requireAzureClient(clients);
         const epics = await client.listWorkItems({
           project: input.project,
           witType: "Epic",
@@ -1597,6 +2039,7 @@ export async function handleWorkItemTool(
       }
 
       case "list_features": {
+        const client = requireAzureClient(clients);
         const features = await client.listWorkItems({
           project: input.project,
           witType: "Feature",
@@ -1609,6 +2052,7 @@ export async function handleWorkItemTool(
       }
 
       case "list_user_stories": {
+        const client = requireAzureClient(clients);
         const stories = await client.listWorkItems({
           project: input.project,
           witType: "User Story",
@@ -1622,6 +2066,7 @@ export async function handleWorkItemTool(
       }
 
       case "get_user_story": {
+        const client = requireAzureClient(clients);
         const story = await client.getWorkItem(input.project, input.userStoryId!);
         const tasks = await client.listWorkItems({
           project: input.project,
@@ -1640,6 +2085,7 @@ export async function handleWorkItemTool(
       }
 
       case "add_acceptance_criteria": {
+        const client = requireAzureClient(clients);
         const updated = await client.addAcceptanceCriteria(
           input.project,
           input.userStoryId!,
@@ -1649,6 +2095,7 @@ export async function handleWorkItemTool(
       }
 
       case "list_tasks": {
+        const client = requireAzureClient(clients);
         const tasks = await client.listWorkItems({
           project: input.project,
           witType: "Task",
@@ -1662,6 +2109,7 @@ export async function handleWorkItemTool(
       }
 
       case "create_epic": {
+        const client = requireAzureClient(clients);
         const epic = await client.createWorkItem({
           project: input.project,
           witType: "Epic",
@@ -1674,6 +2122,7 @@ export async function handleWorkItemTool(
       }
 
       case "create_feature": {
+        const client = requireAzureClient(clients);
         const feature = await client.createWorkItem({
           project: input.project,
           witType: "Feature",
@@ -1686,6 +2135,7 @@ export async function handleWorkItemTool(
       }
 
       case "create_user_story": {
+        const client = requireAzureClient(clients);
         const story = await client.createWorkItem({
           project: input.project,
           witType: "User Story",
@@ -1699,6 +2149,7 @@ export async function handleWorkItemTool(
       }
 
       case "create_task": {
+        const client = requireAzureClient(clients);
         const task = await client.createWorkItem({
           project: input.project,
           witType: "Task",
@@ -1741,8 +2192,27 @@ export async function handleWorkItemTool(
         const SMALL_FILE_LIMIT = 100000;
         const CHUNK_SIZE = 15000;
         const totalChunks = Math.ceil(file.content.length / CHUNK_SIZE);
+
+        // Suppress content by default to reduce risk of content filtering / sensitive data leakage.
+        if (input.includeContent !== true) {
+          logger.info("Returning file metadata only (content suppressed)", { fileName: file.name, size: file.content.length, totalChunks });
+          const response: Record<string, unknown> = {
+            result: "success",
+            fileName: file.name,
+            size: file.content.length,
+            mimeType: file.mimeType,
+            totalChunks,
+            chunkSize: CHUNK_SIZE,
+            message: "Content suppressed by default. Set includeContent=true to return the full text, or use analyse_document for a server-side summary.",
+          };
+          if (input.includePreview === true) {
+            response.preview = truncate(file.content, 500);
+          }
+          return JSON.stringify(response);
+        }
+
         if (file.content.length <= SMALL_FILE_LIMIT) {
-          logger.info("Returning full file content", { fileName: file.name, size: file.content.length });
+          logger.info("Returning full file content (explicit includeContent=true)", { fileName: file.name, size: file.content.length });
           return JSON.stringify({
             result: "success",
             fileName: file.name,
@@ -1752,17 +2222,21 @@ export async function handleWorkItemTool(
             content: file.content,
           });
         }
+
         logger.info("File too large for single response, returning metadata", { fileName: file.name, size: file.content.length, totalChunks });
-        return JSON.stringify({
+        const response: Record<string, unknown> = {
           result: "success",
           fileName: file.name,
           size: file.content.length,
           mimeType: file.mimeType,
           totalChunks,
           chunkSize: CHUNK_SIZE,
-          message: "File is large. Use get_file_chunk with indices 0 to " + (totalChunks - 1) + " to read it, or use analyse_document for a server-side summary.",
-          preview: truncate(file.content, 500),
-        });
+          message: "File is large. Use get_file_chunk with indices 0 to " + (totalChunks - 1) + " (and includeContent=true) to read it, or use analyse_document for a server-side summary.",
+        };
+        if (input.includePreview === true) {
+          response.preview = truncate(file.content, 500);
+        }
+        return JSON.stringify(response);
       }
 
       case "get_file_chunk": {
@@ -1782,6 +2256,17 @@ export async function handleWorkItemTool(
 
         logger.info("Serving file chunk", { fileName: file.name, chunkIndex: idx, totalChunks });
 
+        if (input.includeContent !== true) {
+          return JSON.stringify({
+            result: "success",
+            fileName: file.name,
+            chunkIndex: idx,
+            totalChunks,
+            chunkSize: chunkContent.length,
+            message: "Chunk content suppressed by default. Set includeContent=true to return the chunk text.",
+          });
+        }
+
         return JSON.stringify({
           result: "success",
           fileName: file.name,
@@ -1799,9 +2284,13 @@ export async function handleWorkItemTool(
         return handleGetThemeDetails(input);
 
       case "create_backlog":
-        return handleCreateBacklog(client, input);
+        if (targetSystem === "jira") {
+          return handleCreateBacklogJira(requireJiraClient(clients), input);
+        }
+        return handleCreateBacklog(requireAzureClient(clients), input);
 
       case "update_work_item": {
+        const client = requireAzureClient(clients);
         const updated = await client.updateWorkItem({
           project: input.project,
           workItemId: input.workItemId!,

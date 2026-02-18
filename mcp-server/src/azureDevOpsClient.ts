@@ -1,5 +1,7 @@
 import { getPersonalAccessTokenHandler, WebApi } from "azure-devops-node-api";
 import { IWorkItemTrackingApi } from "azure-devops-node-api/WorkItemTrackingApi";
+import { TeamContext } from "azure-devops-node-api/interfaces/CoreInterfaces";
+import { JsonPatchOperation, Operation } from "azure-devops-node-api/interfaces/common/VSSInterfaces";
 import { WorkItem } from "azure-devops-node-api/interfaces/WorkItemTrackingInterfaces";
 import { Config } from "./config.js";
 import { logger } from "./logger.js";
@@ -48,11 +50,15 @@ export class AzureDevOpsClient {
   private witApi: IWorkItemTrackingApi | null = null;
 
   constructor(config: Config) {
-    const authHandler = getPersonalAccessTokenHandler(config.azureDevOpsPat);
-    this.webApi = new WebApi(config.azureDevOpsUrl, authHandler);
+    if (!config.azureDevOps) {
+      throw new Error("Azure DevOps is not configured. Set AZURE_DEVOPS_ORG, AZURE_DEVOPS_PAT, and AZURE_DEVOPS_URL.");
+    }
+
+    const authHandler = getPersonalAccessTokenHandler(config.azureDevOps.pat);
+    this.webApi = new WebApi(config.azureDevOps.url, authHandler);
     logger.info("Azure DevOps client initialized", {
-      org: config.azureDevOpsOrg,
-      url: config.azureDevOpsUrl,
+      org: config.azureDevOps.org,
+      url: config.azureDevOps.url,
     });
   }
 
@@ -68,18 +74,18 @@ export class AzureDevOpsClient {
     
     try {
       const witApi = await this.getWitApi();
-      const patchDocument: any[] = [];
+      const patchDocument: JsonPatchOperation[] = [];
 
       // Add fields
       patchDocument.push({
-        op: "add",
+        op: Operation.Add,
         path: "/fields/System.Title",
         value: input.title,
       });
 
       if (input.description) {
         patchDocument.push({
-          op: "add",
+          op: Operation.Add,
           path: "/fields/System.Description",
           value: input.description,
         });
@@ -87,7 +93,7 @@ export class AzureDevOpsClient {
 
       if (input.iterationPath) {
         patchDocument.push({
-          op: "add",
+          op: Operation.Add,
           path: "/fields/System.IterationPath",
           value: input.iterationPath,
         });
@@ -95,7 +101,7 @@ export class AzureDevOpsClient {
 
       if (input.areaPath) {
         patchDocument.push({
-          op: "add",
+          op: Operation.Add,
           path: "/fields/System.AreaPath",
           value: input.areaPath,
         });
@@ -103,7 +109,7 @@ export class AzureDevOpsClient {
 
       if (input.assignedTo) {
         patchDocument.push({
-          op: "add",
+          op: Operation.Add,
           path: "/fields/System.AssignedTo",
           value: input.assignedTo,
         });
@@ -111,7 +117,7 @@ export class AzureDevOpsClient {
 
       if (input.state) {
         patchDocument.push({
-          op: "add",
+          op: Operation.Add,
           path: "/fields/System.State",
           value: input.state,
         });
@@ -119,12 +125,13 @@ export class AzureDevOpsClient {
 
       // Add parent link if this is a child work item
       if (input.parentId) {
+        const serverUrl = (this.webApi as unknown as { serverUrl: string }).serverUrl;
         patchDocument.push({
-          op: "add",
+          op: Operation.Add,
           path: `/relations/-`,
           value: {
             rel: "System.LinkTypes.Hierarchy-reverse",
-            url: `${(this.webApi as any).serverUrl}_apis/wit/workItems/${input.parentId}`,
+            url: `${serverUrl}_apis/wit/workItems/${input.parentId}`,
           },
         });
       }
@@ -133,7 +140,7 @@ export class AzureDevOpsClient {
       if (input.witType === "User Story" && input.acceptanceCriteria && input.acceptanceCriteria.length > 0) {
         const criteriaText = input.acceptanceCriteria.map((c) => `${c}<br/>`).join("");
         patchDocument.push({
-          op: "add",
+          op: Operation.Add,
           path: "/fields/Microsoft.VSTS.Common.AcceptanceCriteria",
           value: criteriaText,
         });
@@ -141,7 +148,7 @@ export class AzureDevOpsClient {
 
       if (input.priority) {
         patchDocument.push({
-          op: "add",
+          op: Operation.Add,
           path: "/fields/Microsoft.VSTS.Common.Priority",
           value: input.priority,
         });
@@ -149,7 +156,7 @@ export class AzureDevOpsClient {
 
       if (input.tags) {
         patchDocument.push({
-          op: "add",
+          op: Operation.Add,
           path: "/fields/System.Tags",
           value: input.tags,
         });
@@ -157,7 +164,7 @@ export class AzureDevOpsClient {
 
       if (input.moscow) {
         patchDocument.push({
-          op: "add",
+          op: Operation.Add,
           path: "/fields/Custom.MoSCoW",
           value: input.moscow,
         });
@@ -248,8 +255,8 @@ export class AzureDevOpsClient {
 
       wiql += " ORDER BY [System.Id] DESC";
 
-      const teamContext = { projectId: filter.project };
-      const queryResult = await witApi.queryByWiql({ query: wiql }, teamContext as any);
+      const teamContext: TeamContext = { project: filter.project };
+      const queryResult = await witApi.queryByWiql({ query: wiql }, teamContext);
       
       if (!queryResult.workItems || queryResult.workItems.length === 0) {
         logger.info("No work items found", { project: filter.project, type: filter.witType });
@@ -286,11 +293,11 @@ export class AzureDevOpsClient {
     
     try {
       const witApi = await this.getWitApi();
-      const patchDocument: any[] = [];
+      const patchDocument: JsonPatchOperation[] = [];
 
       if (update.title) {
         patchDocument.push({
-          op: "replace",
+          op: Operation.Replace,
           path: "/fields/System.Title",
           value: update.title,
         });
@@ -298,7 +305,7 @@ export class AzureDevOpsClient {
 
       if (update.state) {
         patchDocument.push({
-          op: "replace",
+          op: Operation.Replace,
           path: "/fields/System.State",
           value: update.state,
         });
@@ -306,7 +313,7 @@ export class AzureDevOpsClient {
 
       if (update.assignedTo) {
         patchDocument.push({
-          op: "replace",
+          op: Operation.Replace,
           path: "/fields/System.AssignedTo",
           value: update.assignedTo,
         });
@@ -314,7 +321,7 @@ export class AzureDevOpsClient {
 
       if (update.description) {
         patchDocument.push({
-          op: "replace",
+          op: Operation.Replace,
           path: "/fields/System.Description",
           value: update.description,
         });
@@ -322,7 +329,7 @@ export class AzureDevOpsClient {
 
       if (update.iterationPath) {
         patchDocument.push({
-          op: "replace",
+          op: Operation.Replace,
           path: "/fields/System.IterationPath",
           value: update.iterationPath,
         });
@@ -330,7 +337,7 @@ export class AzureDevOpsClient {
 
       if (update.areaPath) {
         patchDocument.push({
-          op: "replace",
+          op: Operation.Replace,
           path: "/fields/System.AreaPath",
           value: update.areaPath,
         });
@@ -339,7 +346,7 @@ export class AzureDevOpsClient {
       if (update.acceptanceCriteria && update.acceptanceCriteria.length > 0) {
         const criteriaText = update.acceptanceCriteria.map((c) => `${c}<br/>`).join("");
         patchDocument.push({
-          op: "replace",
+          op: Operation.Replace,
           path: "/fields/Microsoft.VSTS.Common.AcceptanceCriteria",
           value: criteriaText,
         });
@@ -347,7 +354,7 @@ export class AzureDevOpsClient {
 
       if (update.moscow) {
         patchDocument.push({
-          op: "replace",
+          op: Operation.Replace,
           path: "/fields/Custom.MoSCoW",
           value: update.moscow,
         });
@@ -355,7 +362,7 @@ export class AzureDevOpsClient {
 
       if (update.tags) {
         patchDocument.push({
-          op: "replace",
+          op: Operation.Replace,
           path: "/fields/System.Tags",
           value: update.tags,
         });

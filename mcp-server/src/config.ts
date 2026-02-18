@@ -6,9 +6,17 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export interface Config {
-  azureDevOpsOrg: string;
-  azureDevOpsPat: string;
-  azureDevOpsUrl: string;
+  azureDevOps?: {
+    org: string;
+    pat: string;
+    url: string;
+  };
+  jira?: {
+    baseUrl: string;
+    email: string;
+    apiToken: string;
+    epicLinkFieldId?: string;
+  };
 }
 
 function loadEnvFile(): void {
@@ -29,30 +37,40 @@ function loadEnvFile(): void {
 export function loadConfig(): Config {
   loadEnvFile();
 
-  const requiredVars = [
-    "AZURE_DEVOPS_ORG",
-    "AZURE_DEVOPS_PAT",
-    "AZURE_DEVOPS_URL",
-  ];
+  const hasAzure = Boolean(process.env.AZURE_DEVOPS_ORG && process.env.AZURE_DEVOPS_PAT && process.env.AZURE_DEVOPS_URL);
 
-  const missingVars = requiredVars.filter((varName) => !process.env[varName]);
+  // Support common Jira env var aliases (PAT/URL naming).
+  const jiraBaseUrl = process.env.JIRA_BASE_URL || process.env.JIRA_URL;
+  const jiraEmail = process.env.JIRA_EMAIL || process.env.JIRA_USERNAME;
+  const jiraApiToken = process.env.JIRA_API_TOKEN || process.env.JIRA_PAT;
 
-  if (missingVars.length > 0) {
-    console.error(
-      `Error: Missing required environment variables: ${missingVars.join(", ")}`
-    );
-    console.error(
-      "Please create a .env file with the required Azure DevOps configuration."
-    );
-    console.error(
-      "\nRequired variables:\nAZURE_DEVOPS_ORG=<org-name>\nAZURE_DEVOPS_PAT=<personal-access-token>\nAZURE_DEVOPS_URL=<org-url>"
-    );
+  const hasJira = Boolean(jiraBaseUrl && jiraEmail && jiraApiToken);
+
+  if (!hasAzure && !hasJira) {
+    console.error("Error: No work item system is configured.");
+    console.error("Configure at least one of:");
+    console.error("- Azure DevOps: AZURE_DEVOPS_ORG, AZURE_DEVOPS_PAT, AZURE_DEVOPS_URL");
+    console.error("- Jira: JIRA_BASE_URL (or JIRA_URL), JIRA_EMAIL (or JIRA_USERNAME), JIRA_API_TOKEN (or JIRA_PAT)");
     process.exit(1);
   }
 
-  return {
-    azureDevOpsOrg: process.env.AZURE_DEVOPS_ORG!,
-    azureDevOpsPat: process.env.AZURE_DEVOPS_PAT!,
-    azureDevOpsUrl: process.env.AZURE_DEVOPS_URL!,
-  };
+  const config: Config = {};
+  if (hasAzure) {
+    config.azureDevOps = {
+      org: process.env.AZURE_DEVOPS_ORG!,
+      pat: process.env.AZURE_DEVOPS_PAT!,
+      url: process.env.AZURE_DEVOPS_URL!,
+    };
+  }
+
+  if (hasJira) {
+    config.jira = {
+      baseUrl: jiraBaseUrl!,
+      email: jiraEmail!,
+      apiToken: jiraApiToken!,
+      epicLinkFieldId: process.env.JIRA_EPIC_LINK_FIELD_ID || undefined,
+    };
+  }
+
+  return config;
 }

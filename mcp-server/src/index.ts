@@ -7,6 +7,7 @@ import { isInitializeRequest, ListToolsRequestSchema, CallToolRequestSchema } fr
 import { loadConfig } from "./config.js";
 import { logger } from "./logger.js";
 import { AzureDevOpsClient } from "./azureDevOpsClient.js";
+import { JiraClient } from "./jiraClient.js";
 import { workItemTools, handleWorkItemTool, getFileStore } from "./tools/workItems.js";
 
 const PORT = Number.parseInt(process.env.PORT || "80", 10);
@@ -15,7 +16,8 @@ const API_KEY = process.env.MCP_API_KEY || "";
 
 // Initialize config and Azure DevOps client
 const config = loadConfig();
-const azureDevOpsClient = new AzureDevOpsClient(config);
+const azureDevOpsClient = config.azureDevOps ? new AzureDevOpsClient(config) : undefined;
+const jiraClient = config.jira ? new JiraClient(config.jira) : undefined;
 
 // API Key authentication middleware
 function apiKeyAuth(req: Request, res: Response, next: NextFunction): void {
@@ -54,6 +56,26 @@ function createMcpServer(): Server {
     }
   );
 
+  const parseCallToolRequest = (request: unknown): { toolName: string; args: Record<string, unknown> } => {
+    if (typeof request !== "object" || request === null) {
+      throw new Error("Invalid tool request payload");
+    }
+
+    const params = (request as { params?: unknown }).params;
+    if (typeof params !== "object" || params === null) {
+      throw new Error("Invalid tool request params");
+    }
+
+    const toolName = (params as { name?: unknown }).name;
+    if (typeof toolName !== "string" || !toolName.trim()) {
+      throw new Error("Invalid tool name");
+    }
+
+    const rawArgs = (params as { arguments?: unknown }).arguments;
+    const args = (typeof rawArgs === "object" && rawArgs !== null) ? (rawArgs as Record<string, unknown>) : {};
+    return { toolName, args };
+  };
+
   // List tools handler
   server.setRequestHandler(
     ListToolsRequestSchema,
@@ -66,14 +88,13 @@ function createMcpServer(): Server {
   // Call tool handler
   server.setRequestHandler(
     CallToolRequestSchema,
-    async (request: any) => {
-      const toolName = request.params.name as string;
-      const args = request.params.arguments as Record<string, unknown>;
+    async (request: unknown) => {
+      const { toolName, args } = parseCallToolRequest(request);
 
       logger.info("Tool call received", { tool: toolName, project: args.project });
 
       try {
-        const result = await handleWorkItemTool(azureDevOpsClient, toolName, args as never);
+        const result = await handleWorkItemTool({ azureDevOpsClient, jiraClient }, toolName, args as never);
 
         return {
           content: [
@@ -280,7 +301,7 @@ async function startHttpServer() {
         return;
       }
 
-      logger.info("Upload received", { fileName, contentLength: fileContent.length, first50: fileContent.substring(0, 50) });
+      logger.info("Upload received", { fileName, contentLength: fileContent.length });
 
       const extracted = extractNestedContent(fileContent, fileName);
       const { content, error } = decodeUploadContent(extracted, fileName);
