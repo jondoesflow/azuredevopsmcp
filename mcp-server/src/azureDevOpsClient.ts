@@ -1,8 +1,8 @@
 import { getPersonalAccessTokenHandler, WebApi } from "azure-devops-node-api";
-import { IWorkItemTrackingApi } from "azure-devops-node-api/WorkItemTrackingApi";
-import { TeamContext } from "azure-devops-node-api/interfaces/CoreInterfaces";
-import { JsonPatchOperation, Operation } from "azure-devops-node-api/interfaces/common/VSSInterfaces";
-import { WorkItem } from "azure-devops-node-api/interfaces/WorkItemTrackingInterfaces";
+import { IWorkItemTrackingApi } from "azure-devops-node-api/WorkItemTrackingApi.js";
+import { TeamContext } from "azure-devops-node-api/interfaces/CoreInterfaces.js";
+import { JsonPatchOperation, Operation } from "azure-devops-node-api/interfaces/common/VSSInterfaces.js";
+import { WorkItem } from "azure-devops-node-api/interfaces/WorkItemTrackingInterfaces.js";
 import { Config } from "./config.js";
 import { logger } from "./logger.js";
 
