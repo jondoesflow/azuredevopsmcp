@@ -124,6 +124,7 @@ if ([string]::IsNullOrWhiteSpace($jiraToken)) {
   $jiraToken = [System.Environment]::GetEnvironmentVariable('JIRA_PAT', 'Process')
 }
 
+$jiraEpicNameFieldId = [System.Environment]::GetEnvironmentVariable('JIRA_EPIC_NAME_FIELD_ID', 'Process')
 $jiraEpicLinkFieldId = [System.Environment]::GetEnvironmentVariable('JIRA_EPIC_LINK_FIELD_ID', 'Process')
 $jiraHierarchyLinkType = [System.Environment]::GetEnvironmentVariable('JIRA_HIERARCHY_LINK_TYPE', 'Process')
 $jiraAuthType = [System.Environment]::GetEnvironmentVariable('JIRA_AUTH_TYPE', 'Process')
@@ -237,6 +238,10 @@ if ($jiraEnabled) {
 
   if (-not [string]::IsNullOrWhiteSpace($jiraApiVersion)) {
     $setEnvArgs += "JIRA_API_VERSION=$jiraApiVersion"
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($jiraEpicNameFieldId)) {
+    $setEnvArgs += "JIRA_EPIC_NAME_FIELD_ID=$jiraEpicNameFieldId"
   }
 
   if (-not [string]::IsNullOrWhiteSpace($jiraEpicLinkFieldId)) {

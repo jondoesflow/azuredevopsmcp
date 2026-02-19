@@ -4,6 +4,7 @@ export interface JiraConfig {
   apiToken: string;
   authType?: "basic" | "bearer";
   apiVersion?: 2 | 3;
+  epicNameFieldId?: string;
   epicLinkFieldId?: string;
   hierarchyLinkType?: string;
 }
@@ -71,6 +72,7 @@ export class JiraClient {
   private readonly baseUrl: string;
   private readonly authHeader: string;
   private readonly apiBasePath: string;
+  private readonly epicNameFieldId?: string;
   private readonly epicLinkFieldId?: string;
   private readonly hierarchyLinkType: string;
 
@@ -85,6 +87,7 @@ export class JiraClient {
     }
     this.apiBasePath = `/rest/api/${apiVersion}`;
 
+    this.epicNameFieldId = config.epicNameFieldId;
     this.epicLinkFieldId = config.epicLinkFieldId;
     this.hierarchyLinkType = (config.hierarchyLinkType ?? "Relates").trim() || "Relates";
   }
@@ -155,6 +158,12 @@ export class JiraClient {
       issuetype: { name: input.issueType },
       summary: input.summary,
     };
+
+    // Jira Software (Server/DC) commonly requires a separate "Epic Name" custom field for Epic issue types.
+    // If configured, populate it automatically using the issue summary.
+    if (this.epicNameFieldId && input.issueType.trim().toLowerCase() === "epic") {
+      fields[this.epicNameFieldId] = input.summary;
+    }
 
     if (input.description?.trim()) {
       fields.description = input.description;

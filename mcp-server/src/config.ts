@@ -17,6 +17,7 @@ export interface Config {
     apiToken: string;
     authType?: "basic" | "bearer";
     apiVersion?: 2 | 3;
+    epicNameFieldId?: string;
     epicLinkFieldId?: string;
     hierarchyLinkType?: string;
   };
@@ -91,6 +92,7 @@ export function loadConfig(): Config {
       apiToken: jiraApiToken!,
       authType: jiraAuthType,
       apiVersion: jiraApiVersion,
+      epicNameFieldId: process.env.JIRA_EPIC_NAME_FIELD_ID || undefined,
       epicLinkFieldId: process.env.JIRA_EPIC_LINK_FIELD_ID || undefined,
       hierarchyLinkType: process.env.JIRA_HIERARCHY_LINK_TYPE || undefined,
     };
