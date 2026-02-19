@@ -15,7 +15,10 @@ export interface Config {
     baseUrl: string;
     email: string;
     apiToken: string;
+    authType?: "basic" | "bearer";
+    apiVersion?: 2 | 3;
     epicLinkFieldId?: string;
+    hierarchyLinkType?: string;
   };
 }
 
@@ -43,6 +46,24 @@ export function loadConfig(): Config {
   const jiraBaseUrl = process.env.JIRA_BASE_URL || process.env.JIRA_URL;
   const jiraEmail = process.env.JIRA_EMAIL || process.env.JIRA_USERNAME;
   const jiraApiToken = process.env.JIRA_API_TOKEN || process.env.JIRA_PAT;
+  const jiraAuthTypeRaw = process.env.JIRA_AUTH_TYPE || process.env.JIRA_AUTH_MODE;
+  const jiraApiVersionRaw = process.env.JIRA_API_VERSION || process.env.JIRA_REST_API_VERSION;
+  const jiraAuthType = (() => {
+    const normalised = (jiraAuthTypeRaw ?? "").trim().toLowerCase();
+    if (!normalised) return undefined;
+    if (normalised === "basic" || normalised === "bearer") return normalised;
+    console.warn(`Warning: unsupported JIRA_AUTH_TYPE '${jiraAuthTypeRaw}'. Expected 'basic' or 'bearer'. Falling back to 'basic'.`);
+    return undefined;
+  })();
+
+  const jiraApiVersion = (() => {
+    const raw = (jiraApiVersionRaw ?? "").trim();
+    if (!raw) return undefined;
+    const parsed = Number.parseInt(raw, 10);
+    if (parsed === 2 || parsed === 3) return parsed as 2 | 3;
+    console.warn(`Warning: unsupported JIRA_API_VERSION '${jiraApiVersionRaw}'. Expected 2 or 3. Falling back to default.`);
+    return undefined;
+  })();
 
   const hasJira = Boolean(jiraBaseUrl && jiraEmail && jiraApiToken);
 
@@ -68,7 +89,10 @@ export function loadConfig(): Config {
       baseUrl: jiraBaseUrl!,
       email: jiraEmail!,
       apiToken: jiraApiToken!,
+      authType: jiraAuthType,
+      apiVersion: jiraApiVersion,
       epicLinkFieldId: process.env.JIRA_EPIC_LINK_FIELD_ID || undefined,
+      hierarchyLinkType: process.env.JIRA_HIERARCHY_LINK_TYPE || undefined,
     };
   }
 

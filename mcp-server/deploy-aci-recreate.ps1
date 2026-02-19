@@ -71,8 +71,14 @@ if ([string]::IsNullOrWhiteSpace($adoUrl)) { $adoUrl = $adoUrlDefault }
 
 $jiraBaseUrl = (Read-Host "Jira base URL (blank to disable Jira)").Trim()
 $jiraUsername = ''
+$jiraEpicLinkFieldId = ''
+$jiraHierarchyLinkType = ''
 if (-not [string]::IsNullOrWhiteSpace($jiraBaseUrl)) {
   $jiraUsername = (Read-Host "Jira username/email (e.g. jorussel@company.com)").Trim()
+
+  $jiraEpicLinkFieldId = (Read-Host "Jira Epic Link field id (e.g. customfield_10001) (blank to skip Epic linking)").Trim()
+  $jiraHierarchyLinkType = (Read-Host "Jira hierarchy link type name (default: Relates)").Trim()
+  if ([string]::IsNullOrWhiteSpace($jiraHierarchyLinkType)) { $jiraHierarchyLinkType = 'Relates' }
 }
 
 # Secrets
@@ -117,6 +123,15 @@ if (-not [string]::IsNullOrWhiteSpace($jiraBaseUrl)) {
     # config.ts supports JIRA_USERNAME alias
     $envVars += "JIRA_USERNAME=$jiraUsername"
   }
+
+  if (-not [string]::IsNullOrWhiteSpace($jiraEpicLinkFieldId)) {
+    $envVars += "JIRA_EPIC_LINK_FIELD_ID=$jiraEpicLinkFieldId"
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($jiraHierarchyLinkType)) {
+    $envVars += "JIRA_HIERARCHY_LINK_TYPE=$jiraHierarchyLinkType"
+  }
+
   if (-not [string]::IsNullOrWhiteSpace($jiraApiToken)) {
     $secureEnv += "JIRA_API_TOKEN=$jiraApiToken"
   }
