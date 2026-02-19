@@ -17,6 +17,27 @@ function stripHtml(html: string | undefined | null): string {
     .trim();
 }
 
+function jiraDescriptionToText(raw: unknown): string {
+  return typeof raw === "string" ? raw : "";
+}
+
+function appendAcceptanceCriteriaBlock(description: string, criteria: string[] | undefined): string {
+  const items = (criteria ?? []).map((c) => c.trim()).filter(Boolean);
+  if (items.length === 0) return description;
+
+  const base = description.trim();
+  const lines = [base, base ? "" : "", "Acceptance Criteria:", ...items.map((c) => `- ${c}`)].filter((l) => l !== "");
+  return lines.join("\n");
+}
+
+function requireJiraKey(raw: unknown, fieldName: string): string {
+  const value = typeof raw === "string" ? raw.trim() : "";
+  if (!value) {
+    throw new Error(`For Jira, provide ${fieldName} (e.g. 'ABC-123').`);
+  }
+  return value;
+}
+
 type AnalysisMode = "themes" | "process";
 type StoryMaturity = "placeholder" | "detailed";
 type TargetSystem = "azuredevops" | "jira";
@@ -31,6 +52,9 @@ interface RubricAssessment {
 function parseTargetSystem(raw: unknown): TargetSystem {
   const lowered = typeof raw === "string" ? raw.trim().toLowerCase() : "";
   if (lowered === "jira") return "jira";
+  if (lowered === "ado" || lowered === "azure" || lowered === "azuredevops" || lowered === "azure devops") {
+    return "azuredevops";
+  }
   return "azuredevops";
 }
 
@@ -221,9 +245,13 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
+        targetSystem: {
+          type: "string",
+          description: "Target system: 'azuredevops' (default) or 'jira'.",
+        },
         project: {
           type: "string",
-          description: "Project name.",
+          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
         },
         state: {
           type: "string",
@@ -248,13 +276,21 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
+        targetSystem: {
+          type: "string",
+          description: "Target system: 'azuredevops' (default) or 'jira'.",
+        },
         project: {
           type: "string",
-          description: "Project name.",
+          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
         },
         epic: {
           type: "number",
           description: "Parent epic ID.",
+        },
+        epicKey: {
+          type: "string",
+          description: "Parent epic key (Jira only), e.g. 'ABC-123'.",
         },
         state: {
           type: "string",
@@ -275,13 +311,21 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
+        targetSystem: {
+          type: "string",
+          description: "Target system: 'azuredevops' (default) or 'jira'.",
+        },
         project: {
           type: "string",
-          description: "Project name.",
+          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
         },
         feature: {
           type: "number",
           description: "Parent feature ID.",
+        },
+        featureKey: {
+          type: "string",
+          description: "Parent feature key (Jira only) i.e. Jira issue type 'New Feature', e.g. 'ABC-123'.",
         },
         state: {
           type: "string",
@@ -306,16 +350,24 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
+        targetSystem: {
+          type: "string",
+          description: "Target system: 'azuredevops' (default) or 'jira'.",
+        },
         project: {
           type: "string",
-          description: "Project name.",
+          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
         },
         userStoryId: {
           type: "number",
           description: "User story ID.",
         },
+        userStoryKey: {
+          type: "string",
+          description: "User story key (Jira only), e.g. 'ABC-123'.",
+        },
       },
-      required: ["project", "userStoryId"],
+      required: ["project"],
     },
   },
   {
@@ -324,13 +376,21 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
+        targetSystem: {
+          type: "string",
+          description: "Target system: 'azuredevops' (default) or 'jira'.",
+        },
         project: {
           type: "string",
-          description: "Project name.",
+          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
         },
         userStoryId: {
           type: "number",
           description: "User story ID.",
+        },
+        userStoryKey: {
+          type: "string",
+          description: "User story key (Jira only), e.g. 'ABC-123'.",
         },
         criteria: {
           type: "array",
@@ -340,7 +400,7 @@ export const workItemTools: Tool[] = [
           description: "Acceptance criteria list.",
         },
       },
-      required: ["project", "userStoryId", "criteria"],
+      required: ["project", "criteria"],
     },
   },
   {
@@ -349,13 +409,21 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
+        targetSystem: {
+          type: "string",
+          description: "Target system: 'azuredevops' (default) or 'jira'.",
+        },
         project: {
           type: "string",
-          description: "Project name.",
+          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
         },
         userStory: {
           type: "number",
           description: "Parent user story ID.",
+        },
+        userStoryKey: {
+          type: "string",
+          description: "Parent user story key (Jira only), e.g. 'ABC-123'.",
         },
         state: {
           type: "string",
@@ -380,9 +448,13 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
+        targetSystem: {
+          type: "string",
+          description: "Target system: 'azuredevops' (default) or 'jira'.",
+        },
         project: {
           type: "string",
-          description: "Project name.",
+          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
         },
         title: {
           type: "string",
@@ -406,9 +478,13 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
+        targetSystem: {
+          type: "string",
+          description: "Target system: 'azuredevops' (default) or 'jira'.",
+        },
         project: {
           type: "string",
-          description: "Project name.",
+          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
         },
         title: {
           type: "string",
@@ -422,6 +498,10 @@ export const workItemTools: Tool[] = [
           type: "number",
           description: "Parent epic ID.",
         },
+        epicKey: {
+          type: "string",
+          description: "Parent epic key (Jira only), e.g. 'ABC-123'.",
+        },
       },
       required: ["project", "title"],
     },
@@ -432,9 +512,13 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
+        targetSystem: {
+          type: "string",
+          description: "Target system: 'azuredevops' (default) or 'jira'.",
+        },
         project: {
           type: "string",
-          description: "Project name.",
+          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
         },
         title: {
           type: "string",
@@ -447,6 +531,10 @@ export const workItemTools: Tool[] = [
         featureId: {
           type: "number",
           description: "Parent feature ID.",
+        },
+        featureKey: {
+          type: "string",
+          description: "Parent feature key (Jira only) i.e. Jira issue type 'New Feature', e.g. 'ABC-123'.",
         },
         acceptanceCriteria: {
           type: "array",
@@ -465,9 +553,13 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
+        targetSystem: {
+          type: "string",
+          description: "Target system: 'azuredevops' (default) or 'jira'.",
+        },
         project: {
           type: "string",
-          description: "Project name.",
+          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
         },
         title: {
           type: "string",
@@ -481,12 +573,16 @@ export const workItemTools: Tool[] = [
           type: "number",
           description: "Parent user story ID.",
         },
+        userStoryKey: {
+          type: "string",
+          description: "Parent user story key (Jira only), e.g. 'ABC-123'.",
+        },
         assignedTo: {
           type: "string",
           description: "Assigned user.",
         },
       },
-      required: ["project", "title", "userStoryId"],
+      required: ["project", "title"],
     },
   },
   {
@@ -673,13 +769,21 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
+        targetSystem: {
+          type: "string",
+          description: "Target system: 'azuredevops' (default) or 'jira'.",
+        },
         project: {
           type: "string",
-          description: "Project name.",
+          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
         },
         workItemId: {
           type: "number",
           description: "Work item ID.",
+        },
+        workItemKey: {
+          type: "string",
+          description: "Work item key (Jira only), e.g. 'ABC-123'.",
         },
         state: {
           type: "string",
@@ -694,7 +798,7 @@ export const workItemTools: Tool[] = [
           description: "Description text.",
         },
       },
-      required: ["project", "workItemId"],
+      required: ["project"],
     },
   },
 ];
@@ -708,10 +812,15 @@ interface ToolInput {
   state?: string;
   assignedTo?: string;
   epic?: number;
+  epicKey?: string;
   feature?: number;
+  featureKey?: string;
   userStory?: number;
+  userStoryKey?: string;
   top?: number;
   userStoryId?: number;
+  // Alias used by update_work_item and others in Jira mode
+  workItemKey?: string;
   title?: string;
   description?: string;
   epicId?: number;
@@ -2026,6 +2135,24 @@ export async function handleWorkItemTool(
     const targetSystem = parseTargetSystem(input.targetSystem);
     switch (toolName) {
       case "list_epics": {
+        if (targetSystem === "jira") {
+          const jira = requireJiraClient(clients);
+          const epics = await jira.listIssues({
+            projectKey: input.project,
+            issueType: "Epic",
+            state: input.state,
+            assignedTo: input.assignedTo,
+            maxResults: input.top,
+          });
+          const items = epics.map((e) => ({
+            id: e.key,
+            key: e.key,
+            title: e.fields?.summary ?? "",
+            state: e.fields?.status?.name ?? "",
+          }));
+          return JSON.stringify({ result: "success", count: items.length, items });
+        }
+
         const client = requireAzureClient(clients);
         const epics = await client.listWorkItems({
           project: input.project,
@@ -2039,6 +2166,24 @@ export async function handleWorkItemTool(
       }
 
       case "list_features": {
+        if (targetSystem === "jira") {
+          const jira = requireJiraClient(clients);
+          const features = await jira.listIssues({
+            projectKey: input.project,
+            issueType: "New Feature",
+            epicKey: input.epicKey,
+            state: input.state,
+            maxResults: input.top,
+          });
+          const items = features.map((f) => ({
+            id: f.key,
+            key: f.key,
+            title: f.fields?.summary ?? "",
+            state: f.fields?.status?.name ?? "",
+          }));
+          return JSON.stringify({ result: "success", count: items.length, items });
+        }
+
         const client = requireAzureClient(clients);
         const features = await client.listWorkItems({
           project: input.project,
@@ -2052,6 +2197,27 @@ export async function handleWorkItemTool(
       }
 
       case "list_user_stories": {
+        if (targetSystem === "jira") {
+          const jira = requireJiraClient(clients);
+          const linkTypeName = jira.getHierarchyLinkType();
+          const stories = await jira.listIssues({
+            projectKey: input.project,
+            issueType: "Story",
+            linkedToKey: input.featureKey,
+            linkTypeName,
+            state: input.state,
+            assignedTo: input.assignedTo,
+            maxResults: input.top,
+          });
+          const items = stories.map((s) => ({
+            id: s.key,
+            key: s.key,
+            title: s.fields?.summary ?? "",
+            state: s.fields?.status?.name ?? "",
+          }));
+          return JSON.stringify({ result: "success", count: items.length, items });
+        }
+
         const client = requireAzureClient(clients);
         const stories = await client.listWorkItems({
           project: input.project,
@@ -2066,6 +2232,37 @@ export async function handleWorkItemTool(
       }
 
       case "get_user_story": {
+        if (targetSystem === "jira") {
+          const jira = requireJiraClient(clients);
+          const storyKey = requireJiraKey(input.userStoryKey, "userStoryKey");
+          const story = await jira.getIssue(storyKey);
+
+          const linkTypeName = jira.getHierarchyLinkType();
+          const tasks = await jira.listIssues({
+            projectKey: input.project,
+            issueType: "Task",
+            linkedToKey: storyKey,
+            linkTypeName,
+            maxResults: 200,
+          });
+          const taskItems = tasks.map((t) => ({ id: t.key, key: t.key, title: t.fields?.summary ?? "" }));
+
+          const description = jiraDescriptionToText(story.fields?.description);
+          return JSON.stringify({
+            result: "success",
+            id: story.key,
+            key: story.key,
+            title: story.fields?.summary ?? "",
+            state: story.fields?.status?.name ?? "",
+            description: truncate(description),
+            tasks: taskItems,
+          });
+        }
+
+        if (typeof input.userStoryId !== "number") {
+          throw new Error("For Azure DevOps, provide userStoryId (number). For Jira, provide userStoryKey.");
+        }
+
         const client = requireAzureClient(clients);
         const story = await client.getWorkItem(input.project, input.userStoryId!);
         const tasks = await client.listWorkItems({
@@ -2085,6 +2282,20 @@ export async function handleWorkItemTool(
       }
 
       case "add_acceptance_criteria": {
+        if (targetSystem === "jira") {
+          const jira = requireJiraClient(clients);
+          const storyKey = requireJiraKey(input.userStoryKey, "userStoryKey");
+          const story = await jira.getIssue(storyKey);
+          const existing = jiraDescriptionToText(story.fields?.description);
+          const updated = appendAcceptanceCriteriaBlock(existing, input.criteria);
+          await jira.updateIssue(storyKey, { description: updated });
+          return JSON.stringify({ result: "success", key: storyKey });
+        }
+
+        if (typeof input.userStoryId !== "number") {
+          throw new Error("For Azure DevOps, provide userStoryId (number). For Jira, provide userStoryKey.");
+        }
+
         const client = requireAzureClient(clients);
         const updated = await client.addAcceptanceCriteria(
           input.project,
@@ -2095,6 +2306,27 @@ export async function handleWorkItemTool(
       }
 
       case "list_tasks": {
+        if (targetSystem === "jira") {
+          const jira = requireJiraClient(clients);
+          const linkTypeName = jira.getHierarchyLinkType();
+          const tasks = await jira.listIssues({
+            projectKey: input.project,
+            issueType: "Task",
+            linkedToKey: input.userStoryKey,
+            linkTypeName,
+            state: input.state,
+            assignedTo: input.assignedTo,
+            maxResults: input.top,
+          });
+          const items = tasks.map((t) => ({
+            id: t.key,
+            key: t.key,
+            title: t.fields?.summary ?? "",
+            state: t.fields?.status?.name ?? "",
+          }));
+          return JSON.stringify({ result: "success", count: items.length, items });
+        }
+
         const client = requireAzureClient(clients);
         const tasks = await client.listWorkItems({
           project: input.project,
@@ -2109,6 +2341,18 @@ export async function handleWorkItemTool(
       }
 
       case "create_epic": {
+        if (targetSystem === "jira") {
+          const jira = requireJiraClient(clients);
+          const epic = await jira.createIssue({
+            projectKey: input.project,
+            issueType: "Epic",
+            summary: input.title!,
+            description: input.description,
+            labels: ["mcp", "backlog", "epic"],
+          });
+          return JSON.stringify({ result: "success", id: epic.key, key: epic.key, title: input.title! });
+        }
+
         const client = requireAzureClient(clients);
         const epic = await client.createWorkItem({
           project: input.project,
@@ -2122,6 +2366,19 @@ export async function handleWorkItemTool(
       }
 
       case "create_feature": {
+        if (targetSystem === "jira") {
+          const jira = requireJiraClient(clients);
+          const feature = await jira.createIssue({
+            projectKey: input.project,
+            issueType: "New Feature",
+            summary: input.title!,
+            description: input.description,
+            epicKey: input.epicKey,
+            labels: ["mcp", "backlog", "feature"],
+          });
+          return JSON.stringify({ result: "success", id: feature.key, key: feature.key, title: input.title! });
+        }
+
         const client = requireAzureClient(clients);
         const feature = await client.createWorkItem({
           project: input.project,
@@ -2135,6 +2392,27 @@ export async function handleWorkItemTool(
       }
 
       case "create_user_story": {
+        if (targetSystem === "jira") {
+          const jira = requireJiraClient(clients);
+          const description = appendAcceptanceCriteriaBlock(input.description ?? "", input.acceptanceCriteria);
+          const story = await jira.createIssue({
+            projectKey: input.project,
+            issueType: "Story",
+            summary: input.title!,
+            description,
+            labels: ["mcp", "backlog", "story"],
+          });
+
+          if (input.featureKey?.trim()) {
+            await jira.createIssueLink({
+              parentKey: input.featureKey.trim(),
+              childKey: story.key,
+            });
+          }
+
+          return JSON.stringify({ result: "success", id: story.key, key: story.key, title: input.title! });
+        }
+
         const client = requireAzureClient(clients);
         const story = await client.createWorkItem({
           project: input.project,
@@ -2149,6 +2427,34 @@ export async function handleWorkItemTool(
       }
 
       case "create_task": {
+        if (targetSystem === "jira") {
+          const jira = requireJiraClient(clients);
+          const parentStoryKey = requireJiraKey(input.userStoryKey, "userStoryKey");
+          const task = await jira.createIssue({
+            projectKey: input.project,
+            issueType: "Task",
+            summary: input.title!,
+            description: input.description,
+            labels: ["mcp", "backlog", "task"],
+          });
+
+          await jira.createIssueLink({ parentKey: parentStoryKey, childKey: task.key });
+
+          if (input.assignedTo?.trim()) {
+            const raw = input.assignedTo.trim();
+            if (raw.includes("@") || raw.includes(" ")) {
+              throw new Error("Jira assignment requires an accountId. Provide assignedTo as Jira accountId (not email/display name). ");
+            }
+            await jira.assignIssue(task.key, raw);
+          }
+
+          return JSON.stringify({ result: "success", id: task.key, key: task.key, title: input.title! });
+        }
+
+        if (typeof input.userStoryId !== "number") {
+          throw new Error("For Azure DevOps, provide userStoryId (number). For Jira, provide userStoryKey.");
+        }
+
         const client = requireAzureClient(clients);
         const task = await client.createWorkItem({
           project: input.project,
@@ -2290,6 +2596,36 @@ export async function handleWorkItemTool(
         return handleCreateBacklog(requireAzureClient(clients), input);
 
       case "update_work_item": {
+        if (targetSystem === "jira") {
+          const jira = requireJiraClient(clients);
+          const issueKey = requireJiraKey(input.workItemKey, "workItemKey");
+
+          if (typeof input.description === "string") {
+            await jira.updateIssue(issueKey, { description: input.description });
+          }
+
+          if (input.assignedTo?.trim()) {
+            const raw = input.assignedTo.trim();
+            if (raw.toLowerCase() === "unassigned" || raw.toLowerCase() === "none") {
+              await jira.assignIssue(issueKey, null);
+            } else if (raw.includes("@") || raw.includes(" ")) {
+              throw new Error("Jira assignment requires an accountId. Provide assignedTo as Jira accountId (not email/display name). ");
+            } else {
+              await jira.assignIssue(issueKey, raw);
+            }
+          }
+
+          if (input.state?.trim()) {
+            await jira.transitionIssue(issueKey, input.state);
+          }
+
+          return JSON.stringify({ result: "success", key: issueKey });
+        }
+
+        if (typeof input.workItemId !== "number") {
+          throw new Error("For Azure DevOps, provide workItemId (number). For Jira, provide workItemKey.");
+        }
+
         const client = requireAzureClient(clients);
         const updated = await client.updateWorkItem({
           project: input.project,
