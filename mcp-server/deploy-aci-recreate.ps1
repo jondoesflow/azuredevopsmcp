@@ -131,7 +131,6 @@ if (-not [string]::IsNullOrWhiteSpace($jiraBaseUrl)) {
   if (-not [string]::IsNullOrWhiteSpace($jiraHierarchyLinkType)) {
     $envVars += "JIRA_HIERARCHY_LINK_TYPE=$jiraHierarchyLinkType"
   }
-
   if (-not [string]::IsNullOrWhiteSpace($jiraApiToken)) {
     $secureEnv += "JIRA_API_TOKEN=$jiraApiToken"
   }
