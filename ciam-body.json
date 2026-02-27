@@ -1,0 +1,13 @@
+﻿{
+    "properties":  {
+                       "createTenantProperties":  {
+                                                      "displayName":  "transportexternal",
+                                                      "countryCode":  "GB"
+                                                  }
+                   },
+    "location":  "Europe",
+    "sku":  {
+                "name":  "Standard",
+                "tier":  "A0"
+            }
+}

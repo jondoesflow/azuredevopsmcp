@@ -5,6 +5,7 @@ import { DataverseClient } from '../../dataverse/dataverseClient'
 import { env } from '../../config'
 import type { PassengerRequestListItem } from '../../dataverse/types'
 import { AirportSelect } from '../../ui/AirportSelect'
+import { acquireDataverseAccessToken } from '../../auth/dataverseToken'
 
 type TabView = 'requests' | 'groups'
 
@@ -34,14 +35,7 @@ export function BookingOfficerQueuePage() {
 
   const client = useMemo(() => {
     return new DataverseClient({
-      getAccessToken: async (acct) => {
-        const scope = `${env.dataverseUrl.replace(/\/$/, '')}/.default`
-        const result = await instance.acquireTokenSilent({
-          account: acct,
-          scopes: [scope],
-        })
-        return result.accessToken
-      },
+      getAccessToken: async (acct) => await acquireDataverseAccessToken(instance, acct),
     })
   }, [instance])
 
@@ -157,7 +151,7 @@ export function BookingOfficerQueuePage() {
 
   return (
     <div>
-      <h1 className="govuk-heading-l">Booking queue</h1>
+      <h1 className="govuk-heading-l">Authoriser queue</h1>
 
       <nav className="govuk-tabs" data-module="govuk-tabs">
         <ul className="govuk-tabs__list">

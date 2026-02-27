@@ -3,9 +3,11 @@ import { Outlet, Link, useLocation } from 'react-router-dom'
 import { useMsal } from '@azure/msal-react'
 import type { AccountInfo } from '@azure/msal-browser'
 import { env } from '../config'
-import { useAuthz } from '../authz/AuthzProvider'
-import { isHrPersonnel, isBookingOfficer, isPassengerOnly, canAccessAdmin } from '../authz/authz'
+import { useAuthz } from '../authz/useAuthz'
+import { isHrPersonnel, isPassengerOnly, canAccessAdmin, canApproveRequests } from '../authz/authz'
 import govukLogo from '../assets/govuk-logo.png'
+import { clearExternalSession, getExternalSession } from '../auth/externalSession'
+import { loginExternalSignInWithRedirect, loginExternalSignUpWithRedirect } from '../auth/externalMsal'
 
 export function AppShell() {
   const { pathname } = useLocation()
@@ -13,12 +15,22 @@ export function AppShell() {
   const account = (instance.getActiveAccount() ?? accounts[0]) as
     | AccountInfo
     | undefined
+  const externalSession = getExternalSession()
+  const internalTenantId = env.aadTenantId?.trim().toLowerCase()
+  const accountTenantId = account?.homeAccountId?.split('.')[1]?.toLowerCase()
+  const isExternalAccountContext = Boolean(accountTenantId && internalTenantId && accountTenantId !== internalTenantId)
+  const accountDisplay = account?.name && account.name.toLowerCase() !== 'unknown'
+    ? account.name
+    : account?.username
+  const isSignedIn = Boolean(account || externalSession)
+  const displayName = externalSession?.name ?? externalSession?.email ?? accountDisplay ?? 'External user'
   const authz = useAuthz()
   const [bookingOfficeOpen, setBookingOfficeOpen] = useState(false)
+  const [bookingOfficersOpen, setBookingOfficersOpen] = useState(false)
 
   const showPassengerNav = isPassengerOnly(authz.roles)
   const showHrNav = isHrPersonnel(authz.roles)
-  const showBookingOfficeNav = isBookingOfficer(authz.roles)
+  const showBookingOfficeNav = canApproveRequests(authz.roles)
 
   return (
     <div className="govuk-template__body">
@@ -41,37 +53,71 @@ export function AppShell() {
 
             {/* User info - top right */}
             <div className="flightbooking-header-user">
-              {account && authz.loading && (
+              {isSignedIn && authz.loading && (
                 <span className="govuk-header__link">Checking access…</span>
               )}
-              {account && authz.error && (
+              {isSignedIn && authz.error && !externalSession && !isExternalAccountContext && (
                 <span className="govuk-header__link">Access check failed</span>
               )}
-              {account && (
+              {isSignedIn && (
                 <>
-                  <span className="govuk-header__link flightbooking-user-name">{account.name ?? account.username}</span>
+                  <span className="govuk-header__link flightbooking-user-name">{displayName}</span>
                   <button
                     type="button"
                     className="govuk-link govuk-header__link"
-                    onClick={() => void instance.logoutRedirect()}
+                    onClick={() => {
+                      if (account) {
+                        void instance.logoutRedirect()
+                        return
+                      }
+                      clearExternalSession()
+                      sessionStorage.removeItem('externalOnboardingPending')
+                      window.location.assign('/')
+                    }}
                   >
                     Sign out
                   </button>
                 </>
               )}
-              {!account && (
-                <button
-                  type="button"
-                  className="govuk-link govuk-header__link"
-                  onClick={() =>
-                    void instance.loginRedirect({
-                      scopes: [`${env.dataverseUrl.replace(/\/$/, '')}/.default`],
-                      redirectStartPage: window.location.href,
-                    })
-                  }
-                >
-                  Sign in
-                </button>
+              {!isSignedIn && (
+                <>
+                  <button
+                    type="button"
+                    className="govuk-link govuk-header__link"
+                    onClick={() =>
+                      void instance.loginRedirect({
+                        scopes: [env.dataverseScope],
+                        redirectStartPage: window.location.href,
+                      })
+                    }
+                  >
+                    Sign in (internal)
+                  </button>
+                  {env.aadExternalAuthority && env.aadExternalClientId ? (
+                    <>
+                      <button
+                        type="button"
+                        className="govuk-link govuk-header__link"
+                        onClick={() => {
+                          sessionStorage.setItem('externalOnboardingPending', '1')
+                          void loginExternalSignUpWithRedirect()
+                        }}
+                      >
+                        Register new external account
+                      </button>
+                      <button
+                        type="button"
+                        className="govuk-link govuk-header__link"
+                        onClick={() => {
+                          sessionStorage.setItem('externalOnboardingPending', '1')
+                          void loginExternalSignInWithRedirect()
+                        }}
+                      >
+                        External sign in
+                      </button>
+                    </>
+                  ) : null}
+                </>
               )}
             </div>
 
@@ -109,7 +155,7 @@ export function AppShell() {
                 )}
 
                 {/* My Requests - for Passengers */}
-                {showPassengerNav && (
+                {showPassengerNav && !authz.isExternalUser && (
                   <li
                     className={`govuk-header__navigation-item ${pathname === '/my-requests' ? 'govuk-header__navigation-item--active' : ''}`}
                   >
@@ -130,7 +176,7 @@ export function AppShell() {
                   </li>
                 )}
 
-                {/* Booking Office dropdown - for Booking Officers, System Admin */}
+                {/* Authoriser dropdown - for Authorisers, System Admin */}
                 {showBookingOfficeNav && (
                   <li
                     className={`govuk-header__navigation-item flightbooking-dropdown ${bookingOfficeOpen ? 'flightbooking-dropdown--open' : ''}`}
@@ -142,27 +188,18 @@ export function AppShell() {
                       aria-expanded={bookingOfficeOpen}
                       aria-haspopup="true"
                     >
-                      Booking Office
+                      Authoriser
                       <span className="flightbooking-dropdown-arrow" aria-hidden="true">▼</span>
                     </button>
                     {bookingOfficeOpen && (
                       <ul className="flightbooking-dropdown-menu">
                         <li>
                           <Link
-                            className={`govuk-header__link ${pathname === '/booking-queue' ? 'flightbooking-dropdown-item--active' : ''}`}
-                            to="/booking-queue"
+                            className={`govuk-header__link ${pathname === '/authorisations' ? 'flightbooking-dropdown-item--active' : ''}`}
+                            to="/authorisations"
                             onClick={() => setBookingOfficeOpen(false)}
                           >
-                            Queue
-                          </Link>
-                        </li>
-                        <li>
-                          <Link
-                            className={`govuk-header__link ${pathname === '/all-requests' ? 'flightbooking-dropdown-item--active' : ''}`}
-                            to="/all-requests"
-                            onClick={() => setBookingOfficeOpen(false)}
-                          >
-                            All requests
+                            Authorisations
                           </Link>
                         </li>
                       </ul>
@@ -170,14 +207,43 @@ export function AppShell() {
                   </li>
                 )}
 
-                {/* Admin - for System Admin, Booking Officers, HR Personnel */}
+                {/* Booking Officers dropdown - for System Admin, Booking Officers, HR Personnel */}
                 {canAccessAdmin(authz.roles) && (
                   <li
-                    className={`govuk-header__navigation-item ${pathname === '/admin' ? 'govuk-header__navigation-item--active' : ''}`}
+                    className={`govuk-header__navigation-item flightbooking-dropdown ${bookingOfficersOpen ? 'flightbooking-dropdown--open' : ''}`}
                   >
-                    <Link className="govuk-header__link" to="/admin">
-                      Admin
-                    </Link>
+                    <button
+                      type="button"
+                      className="govuk-header__link flightbooking-dropdown-toggle"
+                      onClick={() => setBookingOfficersOpen(!bookingOfficersOpen)}
+                      aria-expanded={bookingOfficersOpen}
+                      aria-haspopup="true"
+                    >
+                      Booking Officers
+                      <span className="flightbooking-dropdown-arrow" aria-hidden="true">▼</span>
+                    </button>
+                    {bookingOfficersOpen && (
+                      <ul className="flightbooking-dropdown-menu">
+                        <li>
+                          <Link
+                            className={`govuk-header__link ${pathname === '/admin' ? 'flightbooking-dropdown-item--active' : ''}`}
+                            to="/admin"
+                            onClick={() => setBookingOfficersOpen(false)}
+                          >
+                            Approvals
+                          </Link>
+                        </li>
+                        <li>
+                          <Link
+                            className={`govuk-header__link ${pathname === '/authorised-approvers' ? 'flightbooking-dropdown-item--active' : ''}`}
+                            to="/authorised-approvers"
+                            onClick={() => setBookingOfficersOpen(false)}
+                          >
+                            Authorised Approvers
+                          </Link>
+                        </li>
+                      </ul>
+                    )}
                   </li>
                 )}
               </ul>

@@ -1,0 +1,37 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<savedqueries xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <savedquery>
+    <IsCustomizable>1</IsCustomizable>
+    <CanBeDeleted>0</CanBeDeleted>
+    <isquickfindquery>0</isquickfindquery>
+    <isprivate>0</isprivate>
+    <isdefault>1</isdefault>
+    <savedqueryid>{572346ba-51d8-4c88-be91-833cfe92a06d}</savedqueryid>
+    <layoutxml>
+      <grid name="resultset" jump="cap_name" select="1" icon="1" preview="1">
+        <row name="result" id="cap_airportid">
+          <cell name="cap_airportcode" width="115" />
+          <cell name="cap_name" width="300" />
+        </row>
+      </grid>
+    </layoutxml>
+    <querytype>0</querytype>
+    <fetchxml>
+      <fetch version="1.0" mapping="logical">
+        <entity name="cap_airport">
+          <attribute name="cap_airportid" />
+          <attribute name="cap_name" />
+          <order attribute="cap_name" descending="false" />
+          <filter type="and">
+            <condition attribute="statecode" operator="eq" value="0" />
+          </filter>
+          <attribute name="cap_airportcode" />
+        </entity>
+      </fetch>
+    </fetchxml>
+    <IntroducedVersion>1.0</IntroducedVersion>
+    <LocalizedNames>
+      <LocalizedName description="Active Airports" languagecode="1033" />
+    </LocalizedNames>
+  </savedquery>
+</savedqueries>

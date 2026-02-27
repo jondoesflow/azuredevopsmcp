@@ -4,6 +4,9 @@ import type { AccountInfo } from '@azure/msal-browser'
 import { DataverseClient } from '../dataverse/dataverseClient'
 import { env } from '../config'
 import type { PassengerRequestListItem } from '../dataverse/types'
+import { acquireDataverseAccessToken } from '../auth/dataverseToken'
+import { useAuthz } from '../authz/useAuthz'
+import { getExternalSession, getRememberedExternalEmail } from '../auth/externalSession'
 
 function formatDateTime(value: string | undefined): string {
   if (!value) return ''
@@ -14,32 +17,83 @@ function formatDateTime(value: string | undefined): string {
 
 export function MyRequestsPage() {
   const { instance, accounts } = useMsal()
+  const authz = useAuthz()
   const account = (instance.getActiveAccount() ?? accounts[0]) as AccountInfo | undefined
   const accountHomeId = account?.homeAccountId
 
   const client = useMemo(() => {
     return new DataverseClient({
-      getAccessToken: async (acct) => {
-        const scope = `${env.dataverseUrl.replace(/\/$/, '')}/.default`
-        const result = await instance.acquireTokenSilent({
-          account: acct,
-          scopes: [scope],
-        })
-        return result.accessToken
-      },
+      getAccessToken: async (acct) => await acquireDataverseAccessToken(instance, acct),
     })
   }, [instance])
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [rows, setRows] = useState<PassengerRequestListItem[]>([])
+  const externalApiBase = useMemo(() => env.externalOnboardingApiBaseUrl.replace(/\/$/, ''), [])
 
   const lastLoadedHomeIdRef = useRef<string | undefined>(undefined)
 
   useEffect(() => {
     let cancelled = false
 
+    function resolveExternalEmail(): string {
+      const externalSession = getExternalSession()
+      const accountClaims = (account?.idTokenClaims ?? {}) as Record<string, unknown>
+      const claimEmail = Array.isArray(accountClaims.emails) ? accountClaims.emails[0] : accountClaims.email
+
+      const options = [
+        externalSession?.email,
+        getRememberedExternalEmail(),
+        account?.username,
+        typeof claimEmail === 'string' ? claimEmail : '',
+        typeof accountClaims.preferred_username === 'string' ? accountClaims.preferred_username : '',
+      ]
+
+      for (const value of options) {
+        const normalized = typeof value === 'string' ? value.trim().toLowerCase() : ''
+        if (normalized.includes('@')) return normalized
+      }
+
+      return ''
+    }
+
     async function load() {
+      if (authz.isExternalUser) {
+        const email = resolveExternalEmail()
+        if (!email) {
+          setError('Unable to resolve external email. Please sign in again to view your requests.')
+          return
+        }
+
+        setBusy(true)
+        setError(null)
+        try {
+          const response = await fetch(`${externalApiBase}/api/external-onboarding/my-requests?email=${encodeURIComponent(email)}`, {
+            method: 'GET',
+            headers: { Accept: 'application/json' },
+          })
+
+          if (!response.ok) {
+            const text = await response.text().catch(() => '')
+            throw new Error(text || `Failed to load external requests (${response.status})`)
+          }
+
+          const payload = (await response.json().catch(() => ({}))) as {
+            value?: PassengerRequestListItem[]
+          }
+
+          if (cancelled) return
+          setRows(Array.isArray(payload.value) ? payload.value : [])
+        } catch (e) {
+          if (cancelled) return
+          setError(e instanceof Error ? e.message : 'Failed to load requests')
+        } finally {
+          if (!cancelled) setBusy(false)
+        }
+        return
+      }
+
       if (!accountHomeId) {
         setError('Please sign in to view your requests')
         return
@@ -77,7 +131,7 @@ export function MyRequestsPage() {
     return () => {
       cancelled = true
     }
-  }, [accountHomeId, client, instance, accounts])
+  }, [accountHomeId, authz.isExternalUser, client, instance, accounts, account, externalApiBase])
 
   return (
     <div>

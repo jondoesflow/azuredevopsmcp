@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMsal } from '@azure/msal-react'
 import type { AccountInfo } from '@azure/msal-browser'
 import { DataverseClient } from '../../dataverse/dataverseClient'
-import { env } from '../../config'
 import type { PassengerRequestListItem } from '../../dataverse/types'
+import { acquireDataverseAccessToken } from '../../auth/dataverseToken'
 
 function formatDateTime(value: string | undefined): string {
   if (!value) return ''
@@ -19,14 +19,7 @@ export function AllRequestsPage() {
 
   const client = useMemo(() => {
     return new DataverseClient({
-      getAccessToken: async (acct) => {
-        const scope = `${env.dataverseUrl.replace(/\/$/, '')}/.default`
-        const result = await instance.acquireTokenSilent({
-          account: acct,
-          scopes: [scope],
-        })
-        return result.accessToken
-      },
+      getAccessToken: async (acct) => await acquireDataverseAccessToken(instance, acct),
     })
   }, [instance])
 

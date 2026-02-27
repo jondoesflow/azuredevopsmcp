@@ -1,0 +1,58 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<savedqueries xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <savedquery>
+    <IsCustomizable>1</IsCustomizable>
+    <CanBeDeleted>1</CanBeDeleted>
+    <isquickfindquery>0</isquickfindquery>
+    <isprivate>0</isprivate>
+    <isdefault>0</isdefault>
+    <savedqueryid>{d59bb6ef-b910-f111-8342-7c1e5278887b}</savedqueryid>
+    <layoutxml>
+      <grid name="resultset" jump="cap_name" select="1" icon="1" preview="1">
+        <row name="result" id="cap_paxdetailid">
+          <cell name="cap_name" width="300" />
+          <cell name="cap_surname" width="100" />
+          <cell name="cap_forenames" width="102" />
+          <cell name="cap_departingon" width="117" />
+          <cell name="cap_returningon" width="117" />
+          <cell name="cap_transportrequeststatus" width="181" />
+        </row>
+      </grid>
+    </layoutxml>
+    <querytype>0</querytype>
+    <fetchxml>
+      <fetch version="1.0" mapping="logical" distinct="true">
+        <entity name="cap_paxdetail">
+          <attribute name="cap_paxdetailid" />
+          <attribute name="cap_name" />
+          <order attribute="cap_name" descending="false" />
+          <attribute name="cap_surname" />
+          <attribute name="cap_forenames" />
+          <attribute name="cap_departingon" />
+          <attribute name="cap_returningon" />
+          <attribute name="cap_transportrequeststatus" />
+          <filter type="and">
+            <condition attribute="statecode" operator="eq" value="0" />
+            <condition attribute="cap_transportrequeststatus" operator="in">
+              <value>764820004</value>
+              <value>764820002</value>
+            </condition>
+          </filter>
+          <link-entity name="cap_group" alias="aa" link-type="outer" from="cap_groupid" to="cap_group" />
+          <link-entity name="cap_authorisation" alias="ab" link-type="inner" from="cap_authorisationid" to="cap_authroisationreference">
+            <filter type="and">
+              <condition attribute="cap_authorisationstatus" operator="eq" value="764820001" />
+            </filter>
+          </link-entity>
+          <filter type="and">
+            <condition attribute="cap_groupid" operator="null" entityname="aa" />
+          </filter>
+        </entity>
+      </fetch>
+    </fetchxml>
+    <IntroducedVersion>1.0.0.0</IntroducedVersion>
+    <LocalizedNames>
+      <LocalizedName description="Approved by Authoriser" languagecode="1033" />
+    </LocalizedNames>
+  </savedquery>
+</savedqueries>

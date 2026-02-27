@@ -1,0 +1,37 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<savedqueries xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <savedquery>
+    <IsCustomizable>1</IsCustomizable>
+    <CanBeDeleted>0</CanBeDeleted>
+    <isquickfindquery>0</isquickfindquery>
+    <isprivate>0</isprivate>
+    <isdefault>1</isdefault>
+    <savedqueryid>{54d51041-2762-4d0e-b330-538348bfd97a}</savedqueryid>
+    <layoutxml>
+      <grid name="resultset" jump="cap_rankname" select="1" icon="1" preview="1">
+        <row name="result" id="cap_rankid">
+          <cell name="cap_rankabbreviation" width="147" />
+          <cell name="cap_rankname" width="300" />
+        </row>
+      </grid>
+    </layoutxml>
+    <querytype>0</querytype>
+    <fetchxml>
+      <fetch version="1.0" mapping="logical">
+        <entity name="cap_rank">
+          <attribute name="cap_rankid" />
+          <attribute name="cap_rankname" />
+          <order attribute="cap_rankname" descending="false" />
+          <filter type="and">
+            <condition attribute="statecode" operator="eq" value="0" />
+          </filter>
+          <attribute name="cap_rankabbreviation" />
+        </entity>
+      </fetch>
+    </fetchxml>
+    <IntroducedVersion>1.0</IntroducedVersion>
+    <LocalizedNames>
+      <LocalizedName description="Active Ranks" languagecode="1033" />
+    </LocalizedNames>
+  </savedquery>
+</savedqueries>

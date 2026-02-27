@@ -1,0 +1,37 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<savedqueries xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <savedquery>
+    <IsCustomizable>1</IsCustomizable>
+    <CanBeDeleted>0</CanBeDeleted>
+    <isquickfindquery>0</isquickfindquery>
+    <isprivate>0</isprivate>
+    <isdefault>1</isdefault>
+    <savedqueryid>{d5f1ff4f-d3ca-4231-9e0c-d7403d36f47a}</savedqueryid>
+    <layoutxml>
+      <grid name="cap_servicecodes" jump="cap_servicecodename" select="1" icon="1" preview="1">
+        <row name="cap_servicecode" id="cap_servicecodeid">
+          <cell name="cap_servicecodename" width="300" />
+          <cell name="createdon" width="125" />
+        </row>
+      </grid>
+    </layoutxml>
+    <querytype>2</querytype>
+    <fetchxml>
+      <fetch version="1.0" mapping="logical">
+        <entity name="cap_servicecode">
+          <attribute name="cap_servicecodeid" />
+          <attribute name="cap_servicecodename" />
+          <attribute name="createdon" />
+          <order attribute="cap_servicecodename" descending="false" />
+          <filter type="and">
+            <condition attribute="statecode" operator="eq" value="0" />
+          </filter>
+        </entity>
+      </fetch>
+    </fetchxml>
+    <IntroducedVersion>1.0</IntroducedVersion>
+    <LocalizedNames>
+      <LocalizedName description="Service Code Associated View" languagecode="1033" />
+    </LocalizedNames>
+  </savedquery>
+</savedqueries>

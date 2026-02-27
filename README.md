@@ -14,6 +14,7 @@ A React-based passenger transport booking portal that integrates with Microsoft 
 - [Dataverse Configuration](#dataverse-configuration)
 - [User Roles & Permissions](#user-roles--permissions)
 - [Application Routes](#application-routes)
+- [Contributing & Standards](#contributing--standards)
 - [Development](#development)
 
 ---
@@ -24,8 +25,9 @@ The flightbooking Transport Portal is a single-page application (SPA) designed f
 
 1. **Passengers** - Can submit their own transport requests and view their booking history
 2. **HR Personnel** - Can create transport requests on behalf of other employees, including multi-passenger group bookings
-3. **Booking Officers** - Can view, approve, or reject transport requests in a queue-based workflow
-4. **System Administrators** - Have full access to all features
+3. **Booking Officers** - Can view and edit approved transport requests, any edit, the booking officer can determine whether to change the requests status back to pending approval.  If that happens the transport requests goes back to the authoriser who previously authorised it.
+4. **Authorisers** - Can view, approve or reject transport requests in a queue-based workflow.
+5. **System Administrators** - Have full access to all features
 
 ---
 
@@ -183,7 +185,7 @@ The flightbooking Transport Portal is a single-page application (SPA) designed f
 
 4. **Start the development server:**
    ```bash
-   npm run dev
+   npm run dev:clean
    ```
 
 5. **Open in browser:**
@@ -196,6 +198,35 @@ npm run build
 ```
 
 The built files will be in the `dist/` directory.
+
+### External Onboarding API (Path B)
+
+For external users, Contact creation can be handled by a backend API (app-only Dataverse access) instead of browser delegated tokens.
+
+1. Configure backend env values in `.env`:
+   - `EXTERNAL_ONBOARDING_DATAVERSE_URL`
+   - `EXTERNAL_ONBOARDING_TENANT_ID`
+   - `EXTERNAL_ONBOARDING_CLIENT_ID`
+   - `EXTERNAL_ONBOARDING_CLIENT_SECRET`
+   - `EXTERNAL_ONBOARDING_SOLUTION_PREFIX`
+2. Start the API:
+   ```bash
+   npm run api:external-onboarding:clean
+   ```
+3. Start the frontend (Vite proxies `/api` to `http://localhost:8787` by default):
+   ```bash
+   npm run dev:clean
+   ```
+
+### Port cleanup scripts (Windows)
+
+If previous Node sessions leave ports occupied, use these convenience scripts:
+
+- `npm run port:clear:dev` clears port `5173`
+- `npm run port:clear:api` clears port `8787`
+- `npm run dev:clean` clears `5173` then starts Vite
+- `npm run api:external-onboarding:clean` clears `8787` then starts the onboarding API
+- `npm run start:clean` starts both services (API + frontend) with cleanup
 
 ---
 
@@ -365,6 +396,16 @@ Create the following Dataverse security roles and note their GUIDs:
 
 ---
 
+## Contributing & Standards
+
+- Contribution guide: `CONTRIBUTING.md`
+- Copilot SSOT policy: `.github/copilot-instructions.md`
+- Instruction set: `.github/instructions/README.md`
+- Engineering review guidance: `docs/engineering/README.md`
+- Planning scaffolding: `plans/README.md`
+
+---
+
 ## Development
 
 ### Project Structure
@@ -402,7 +443,8 @@ src/
 | Command | Description |
 |---------|-------------|
 | `npm run dev` | Start development server on port 5173 |
-| `npm run build` | Build for production |
+| `npm run validate:policy` | Validate Copilot standards/policy scaffolding |
+| `npm run build` | Validate policy, then build for production |
 | `npm run preview` | Preview production build |
 | `npm run lint` | Run ESLint |
 

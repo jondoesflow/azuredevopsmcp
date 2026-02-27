@@ -4,10 +4,21 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev": "npm run dev:clean",
+    "dev:clean": "npm run port:clear:dev && vite --port 5173",
+    "start:clean": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-clean.ps1",
+    "api:external-onboarding": "npm run api:external-onboarding:clean",
+    "api:external-onboarding:clean": "npm run port:clear:api && node backend/external-onboarding-api.mjs",
+    "port:clear:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/clear-ports.ps1 -Ports 5173",
+    "port:clear:api": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/clear-ports.ps1 -Ports 8787",
+    "validate:policy": "node scripts/validate-policy.mjs",
+    "build": "npm run validate:policy && tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:e2e": "playwright test",
+    "test:e2e:auth": "playwright test tests/e2e/auth.setup.spec.ts --project=setup --headed",
+    "test:e2e:auth:hold": "playwright test tests/e2e/auth.setup.spec.ts --project=setup --headed --debug",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@azure/msal-browser": "^5.0.2",
@@ -24,6 +35,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",

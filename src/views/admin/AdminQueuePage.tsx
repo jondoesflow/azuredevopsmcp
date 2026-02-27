@@ -1,28 +1,117 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useMsal } from '@azure/msal-react'
 import type { AccountInfo } from '@azure/msal-browser'
 import { DataverseClient } from '../../dataverse/dataverseClient'
 import { env } from '../../config'
-import type { PassengerRequestListItem } from '../../dataverse/types'
-import { AirportSelect } from '../../ui/AirportSelect'
+import type { PassengerComment, PassengerRequestListItem, PaxGroupListItem } from '../../dataverse/types'
+import { acquireDataverseAccessToken } from '../../auth/dataverseToken'
+
+type ReviewTab = 'identity' | 'travel' | 'documents' | 'medical' | 'contacts' | 'group'
+type QueueTabKey = 'pending' | 'approved' | 'rejected' | 'aircore'
+
+type GroupApprovalItem = {
+  groupId: string
+  groupName: string
+  departingOn?: string
+  members: PassengerRequestListItem[]
+}
+
+type QueueTabData = {
+  passengers: PassengerRequestListItem[]
+  groups: GroupApprovalItem[]
+}
+
+const TAB_META: Array<{
+  key: QueueTabKey
+  label: string
+  passengerViewGuid?: string
+  groupViewGuid?: string
+}> = [
+  {
+    key: 'pending',
+    label: 'Pending Authoriser Approval',
+    passengerViewGuid: env.viewPassengerPendingAuthoriserApproval,
+    groupViewGuid: env.viewGroupPendingAuthoriserApproval,
+  },
+  {
+    key: 'approved',
+    label: 'Approved by Authoriser',
+    passengerViewGuid: env.viewPassengerApprovedByAuthoriser,
+    groupViewGuid: env.viewGroupApprovedByAuthoriser,
+  },
+  {
+    key: 'rejected',
+    label: 'Rejected by Booking Officer',
+    passengerViewGuid: env.viewPassengerRejectedByBookingOfficer,
+    groupViewGuid: env.viewGroupRejectedByBookingOfficer,
+  },
+  {
+    key: 'aircore',
+    label: 'Ready for AirCore',
+    passengerViewGuid: env.viewPassengerReadyForAirCore,
+    groupViewGuid: env.viewGroupReadyForAirCore,
+  },
+]
+
+const EMPTY_TAB_DATA: QueueTabData = { passengers: [], groups: [] }
 
 function formatDateTime(value: string | undefined): string {
-  if (!value) return ''
+  if (!value) return '—'
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return value
   return d.toLocaleString()
 }
 
-function toDateTimeLocalValue(value: string | undefined): string {
-  if (!value) return ''
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return ''
-  const yyyy = d.getFullYear()
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  const hh = String(d.getHours()).padStart(2, '0')
-  const min = String(d.getMinutes()).padStart(2, '0')
-  return `${yyyy}-${mm}-${dd}T${hh}:${min}`
+function formatYesNo(value: boolean | undefined): string {
+  if (value === true) return 'Yes'
+  if (value === false) return 'No'
+  return '—'
+}
+
+function extractGuidFromODataId(odataId: string | undefined): string | undefined {
+  return odataId?.match(/\(([0-9a-f-]{36})\)$/i)?.[1]
+}
+
+function departureSortAsc(a: PassengerRequestListItem, b: PassengerRequestListItem): number {
+  const aTime = a.departingOn ? new Date(a.departingOn).getTime() : Number.MAX_SAFE_INTEGER
+  const bTime = b.departingOn ? new Date(b.departingOn).getTime() : Number.MAX_SAFE_INTEGER
+  return aTime - bTime
+}
+
+function toGroupItems(groupRows: PaxGroupListItem[], passengerRows: PassengerRequestListItem[]): GroupApprovalItem[] {
+  const groupedPassengers = new Map<string, PassengerRequestListItem[]>()
+  for (const row of passengerRows) {
+    if (!row.groupId) continue
+    const members = groupedPassengers.get(row.groupId) ?? []
+    members.push(row)
+    groupedPassengers.set(row.groupId, members)
+  }
+
+  const result: GroupApprovalItem[] = []
+  for (const group of groupRows) {
+    const groupId = group.id?.trim()
+    if (!groupId) continue
+    const members = (groupedPassengers.get(groupId) ?? []).sort(departureSortAsc)
+    if (members.length === 0) continue
+    const lead = members[0]
+    result.push({
+      groupId,
+      groupName: group.name?.trim() || lead?.groupName?.trim() || `Group ${groupId.slice(0, 8)}`,
+      departingOn: lead?.departingOn,
+      members,
+    })
+  }
+
+  return result.sort((a, b) => {
+    const aTime = a.departingOn ? new Date(a.departingOn).getTime() : Number.MAX_SAFE_INTEGER
+    const bTime = b.departingOn ? new Date(b.departingOn).getTime() : Number.MAX_SAFE_INTEGER
+    return aTime - bTime
+  })
+}
+
+function isInvalidViewForEntityError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('No Query View exists with the Given Query Id on the Entity Set')
 }
 
 export function AdminQueuePage() {
@@ -32,67 +121,151 @@ export function AdminQueuePage() {
 
   const client = useMemo(() => {
     return new DataverseClient({
-      getAccessToken: async (acct) => {
-        const scope = `${env.dataverseUrl.replace(/\/$/, '')}/.default`
-        const result = await instance.acquireTokenSilent({
-          account: acct,
-          scopes: [scope],
-        })
-        return result.accessToken
-      },
+      getAccessToken: async (acct) => await acquireDataverseAccessToken(instance, acct),
     })
   }, [instance])
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
-  const [rows, setRows] = useState<PassengerRequestListItem[]>([])
-  const lastLoadedHomeIdRef = useRef<string | undefined>(undefined)
-
-  const [selected, setSelected] = useState<PassengerRequestListItem | null>(null)
-  const [edit, setEdit] = useState({
-    surname: '',
-    forenames: '',
-    departingFromIata: '',
-    destinationIata: '',
-    departingOn: '',
-    returningOn: '',
+  const [activeTab, setActiveTab] = useState<QueueTabKey>('pending')
+  const [queueByTab, setQueueByTab] = useState<Record<QueueTabKey, QueueTabData>>({
+    pending: EMPTY_TAB_DATA,
+    approved: EMPTY_TAB_DATA,
+    rejected: EMPTY_TAB_DATA,
+    aircore: EMPTY_TAB_DATA,
   })
 
-  async function updateStatus(newStatus: string) {
+  const [reviewOpen, setReviewOpen] = useState(false)
+  const [reviewTab, setReviewTab] = useState<ReviewTab>('identity')
+  const [selected, setSelected] = useState<PassengerRequestListItem | null>(null)
+
+  const [rejectOpen, setRejectOpen] = useState(false)
+  const [rejectReason, setRejectReason] = useState('')
+
+  const [comments, setComments] = useState<PassengerComment[]>([])
+  const [commentsBusy, setCommentsBusy] = useState(false)
+  const [commentInput, setCommentInput] = useState('')
+
+  const activeTabData = queueByTab[activeTab]
+
+  async function loadComments(target: PassengerRequestListItem, acct: AccountInfo) {
+    const bookingId = extractGuidFromODataId(target.odataId)
+    if (!bookingId) {
+      setComments([])
+      return
+    }
+    setCommentsBusy(true)
+    try {
+      const items = await client.listPassengerComments(acct, bookingId)
+      setComments(items)
+    } finally {
+      setCommentsBusy(false)
+    }
+  }
+
+  const loadRequestsForView = useCallback(async (acct: AccountInfo, viewGuid: string | undefined): Promise<PassengerRequestListItem[]> => {
+    if (!viewGuid) return []
+    try {
+      return await client.listPassengerRequestsByView(acct, viewGuid)
+    } catch (e) {
+      if (isInvalidViewForEntityError(e)) return []
+      throw e
+    }
+  }, [client])
+
+  const refreshQueue = useCallback(async (acct: AccountInfo) => {
+    const next: Record<QueueTabKey, QueueTabData> = {
+      pending: EMPTY_TAB_DATA,
+      approved: EMPTY_TAB_DATA,
+      rejected: EMPTY_TAB_DATA,
+      aircore: EMPTY_TAB_DATA,
+    }
+
+    for (const tab of TAB_META) {
+      const [passengerRows, groupRows] = await Promise.all([
+        loadRequestsForView(acct, tab.passengerViewGuid),
+        tab.groupViewGuid ? client.listGroupsByView(acct, tab.groupViewGuid) : Promise.resolve([]),
+      ])
+
+      const normalizedPassengers = [...passengerRows].filter((r) => !r.groupId).sort(departureSortAsc)
+      const normalizedGroups = toGroupItems(groupRows, passengerRows)
+      next[tab.key] = {
+        passengers: normalizedPassengers,
+        groups: normalizedGroups,
+      }
+    }
+
+    setQueueByTab(next)
+  }, [client, loadRequestsForView])
+
+  async function openReview(item: PassengerRequestListItem) {
+    if (!account) return
     setError(null)
     setSuccess(null)
 
-    const acct = (instance.getActiveAccount() ?? accounts[0]) as AccountInfo | undefined
-    if (!acct) {
-      setError('No signed-in account available')
+    const detailed = item.odataId ? await client.getPassengerRequestById(account, item.odataId) : null
+    const target = detailed ?? item
+
+    setSelected(target)
+    setReviewTab(target.groupId ? 'group' : 'identity')
+    setReviewOpen(true)
+    await loadComments(target, account)
+  }
+
+  async function addComment(subject: string) {
+    if (!account || !selected) return
+    const bookingId = extractGuidFromODataId(selected.odataId)
+    if (!bookingId) return
+
+    const text = commentInput.trim()
+    if (!text) return
+
+    setCommentsBusy(true)
+    setError(null)
+    try {
+      await client.addPassengerComment(account, bookingId, subject, text)
+      setCommentInput('')
+      await loadComments(selected, account)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to send comment')
+    } finally {
+      setCommentsBusy(false)
+    }
+  }
+
+  async function rejectSelected() {
+    if (!account || !selected) return
+    const bookingId = extractGuidFromODataId(selected.odataId)
+    if (!bookingId) {
+      setError('Selected record is missing booking id.')
       return
     }
-    if (!selected) return
 
+    const reason = rejectReason.trim()
+    if (!reason) {
+      setError('Please provide a reason for rejection.')
+      return
+    }
+
+    setBusy(true)
+    setError(null)
+    setSuccess(null)
     try {
-      setBusy(true)
-      await client.updatePassengerRequest(acct, selected, {
-        transportRequestStatusLabel: newStatus,
-      })
+      await client.updateAuthorisationStatusForPassengerBooking(account, bookingId, 'Rejected by Booking Office')
+      await client.addPassengerComment(account, bookingId, 'Rejected by Booking Officer', reason)
 
-      setSelected((s) => (s ? { ...s, transportRequestStatusLabel: newStatus } : s))
-      setRows((rs) =>
-        rs.map((r) =>
-          selected.odataId && r.odataId === selected.odataId
-            ? { ...r, transportRequestStatusLabel: newStatus }
-            : r,
-        ),
-      )
-
-      const res = await client.listAllPassengerRequests(acct)
-      setRows(res)
-      const refreshed = res.find((x) => x.odataId && x.odataId === selected.odataId) ?? null
-      if (refreshed) setSelected(refreshed)
-
-      setSuccess(`Status updated to ${newStatus}`)
+      setRejectReason('')
+      setRejectOpen(false)
+      await refreshQueue(account)
+      const refreshed = await client.getPassengerRequestById(account, selected.odataId ?? '')
+      if (refreshed) {
+        setSelected(refreshed)
+        await loadComments(refreshed, account)
+      }
+      setSuccess('Request rejected and returned to Authoriser with comments.')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Update failed')
+      setError(e instanceof Error ? e.message : 'Failed to reject request')
     } finally {
       setBusy(false)
     }
@@ -107,8 +280,6 @@ export function AdminQueuePage() {
         return
       }
 
-      if (lastLoadedHomeIdRef.current === accountHomeId) return
-
       const acct = (instance.getActiveAccount() ?? accounts[0]) as AccountInfo | undefined
       if (!acct) {
         setError('No signed-in account available')
@@ -119,13 +290,9 @@ export function AdminQueuePage() {
       setError(null)
       setSuccess(null)
       try {
-        const res = await client.listAllPassengerRequests(acct)
-        if (cancelled) return
-        lastLoadedHomeIdRef.current = accountHomeId
-        setRows(res)
+        await refreshQueue(acct)
       } catch (e) {
         if (cancelled) return
-        lastLoadedHomeIdRef.current = undefined
         setError(e instanceof Error ? e.message : 'Failed to load requests')
       } finally {
         if (!cancelled) setBusy(false)
@@ -136,11 +303,11 @@ export function AdminQueuePage() {
     return () => {
       cancelled = true
     }
-  }, [accountHomeId, client, instance, accounts])
+  }, [accountHomeId, instance, accounts, refreshQueue])
 
   return (
     <div>
-      <h1 className="govuk-heading-l">Admin queue</h1>
+      <h1 className="govuk-heading-l">Booking Officers</h1>
 
       {error ? (
         <div className="govuk-error-summary" data-module="govuk-error-summary">
@@ -148,238 +315,247 @@ export function AdminQueuePage() {
             <h2 className="govuk-error-summary__title">There is a problem</h2>
             <div className="govuk-error-summary__body">
               <ul className="govuk-list govuk-error-summary__list">
-                <li>
-                  <a href="#">{error}</a>
-                </li>
+                <li>{error}</li>
               </ul>
             </div>
           </div>
         </div>
       ) : null}
 
-      {success ? (
-        <div
-          className="govuk-notification-banner"
-          role="region"
-          aria-labelledby="govuk-notification-banner-title"
-          data-module="govuk-notification-banner"
-        >
-          <div className="govuk-notification-banner__header">
-            <h2 className="govuk-notification-banner__title" id="govuk-notification-banner-title">
-              Success
-            </h2>
-          </div>
-          <div className="govuk-notification-banner__content">
-            <p className="govuk-notification-banner__heading">{success}</p>
+      {success ? <p className="govuk-body govuk-!-font-weight-bold">{success}</p> : null}
+
+      <div className="govuk-tabs" data-module="govuk-tabs" style={{ marginBottom: '16px' }}>
+        <ul className="govuk-tabs__list">
+          {TAB_META.map((tab) => (
+            <li key={tab.key} className={`govuk-tabs__list-item ${activeTab === tab.key ? 'govuk-tabs__list-item--selected' : ''}`}>
+              <button
+                type="button"
+                className="govuk-link"
+                onClick={() => setActiveTab(tab.key)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+              >
+                {tab.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {busy ? <p className="govuk-body">Loading…</p> : null}
+
+      {!busy && !error && activeTabData.passengers.length === 0 && activeTabData.groups.length === 0 ? (
+        <p className="govuk-body">No requests found for this tab.</p>
+      ) : null}
+
+      {!busy && !error ? (
+        <>
+          <h2 className="govuk-heading-m">Passengers</h2>
+          <table className="govuk-table">
+            <thead className="govuk-table__head">
+              <tr className="govuk-table__row">
+                <th scope="col" className="govuk-table__header">Passenger</th>
+                <th scope="col" className="govuk-table__header">From</th>
+                <th scope="col" className="govuk-table__header">To</th>
+                <th scope="col" className="govuk-table__header">Status</th>
+                <th scope="col" className="govuk-table__header">Departing</th>
+              </tr>
+            </thead>
+            <tbody className="govuk-table__body">
+              {activeTabData.passengers.map((r, idx) => (
+                <tr className="govuk-table__row" key={r.id ?? String(idx)} style={{ cursor: 'pointer' }} onClick={() => void openReview(r)}>
+                  <td className="govuk-table__cell">{`${r.forenames ?? ''} ${r.surname ?? ''}`.trim()}</td>
+                  <td className="govuk-table__cell">{r.departingFromIata ?? ''}</td>
+                  <td className="govuk-table__cell">{r.destinationIata ?? ''}</td>
+                  <td className="govuk-table__cell">{r.transportRequestStatusLabel ?? ''}</td>
+                  <td className="govuk-table__cell">{formatDateTime(r.departingOn)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <h2 className="govuk-heading-m">Groups</h2>
+          <table className="govuk-table">
+            <thead className="govuk-table__head">
+              <tr className="govuk-table__row">
+                <th scope="col" className="govuk-table__header">Group reference</th>
+                <th scope="col" className="govuk-table__header">Departure</th>
+              </tr>
+            </thead>
+            <tbody className="govuk-table__body">
+              {activeTabData.groups.map((group) => (
+                <tr className="govuk-table__row" key={group.groupId} style={{ cursor: 'pointer' }} onClick={() => void openReview(group.members[0])}>
+                  <td className="govuk-table__cell">{group.groupName}</td>
+                  <td className="govuk-table__cell">{formatDateTime(group.departingOn)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ) : null}
+
+      {reviewOpen && selected ? (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ width: '100%', maxWidth: '1200px', maxHeight: '90vh', overflowY: 'auto', background: '#fff', padding: '24px' }}>
+            <h2 className="govuk-heading-m">Review passenger request</h2>
+            <p className="govuk-body">{`${selected.forenames ?? ''} ${selected.surname ?? ''}`.trim() || 'Unnamed request'}</p>
+
+            <div className="govuk-grid-row">
+              <div className="govuk-grid-column-two-thirds">
+                <div className="govuk-button-group" style={{ marginBottom: '16px' }}>
+                  <button type="button" className="govuk-button govuk-button--secondary" onClick={() => setReviewTab('identity')}>Identity</button>
+                  <button type="button" className="govuk-button govuk-button--secondary" onClick={() => setReviewTab('travel')}>Travel</button>
+                  <button type="button" className="govuk-button govuk-button--secondary" onClick={() => setReviewTab('documents')}>Documents</button>
+                  <button type="button" className="govuk-button govuk-button--secondary" onClick={() => setReviewTab('medical')}>Medical</button>
+                  <button type="button" className="govuk-button govuk-button--secondary" onClick={() => setReviewTab('contacts')}>Contacts</button>
+                  {selected.groupId ? <button type="button" className="govuk-button govuk-button--secondary" onClick={() => setReviewTab('group')}>Group</button> : null}
+                </div>
+
+                {reviewTab === 'identity' ? (
+                  <dl className="govuk-summary-list">
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Surname</dt><dd className="govuk-summary-list__value">{selected.surname ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Forenames</dt><dd className="govuk-summary-list__value">{selected.forenames ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Service staff number</dt><dd className="govuk-summary-list__value">{selected.serviceStaffNumber ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Military/Civilian</dt><dd className="govuk-summary-list__value">{selected.militaryCivilianLabel ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Gender</dt><dd className="govuk-summary-list__value">{selected.genderLabel ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Date of birth</dt><dd className="govuk-summary-list__value">{formatDateTime(selected.dateOfBirth)}</dd></div>
+                  </dl>
+                ) : null}
+
+                {reviewTab === 'travel' ? (
+                  <dl className="govuk-summary-list">
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">From</dt><dd className="govuk-summary-list__value">{selected.departingFromIata ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">To</dt><dd className="govuk-summary-list__value">{selected.destinationIata ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Departing on</dt><dd className="govuk-summary-list__value">{formatDateTime(selected.departingOn)}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Returning on</dt><dd className="govuk-summary-list__value">{formatDateTime(selected.returningOn)}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Purpose of travel</dt><dd className="govuk-summary-list__value">{selected.purposeOfTravelName ?? '—'}</dd></div>
+                  </dl>
+                ) : null}
+
+                {reviewTab === 'documents' ? (
+                  <dl className="govuk-summary-list">
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Document type</dt><dd className="govuk-summary-list__value">{selected.documentTypeLabel ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Document number</dt><dd className="govuk-summary-list__value">{selected.documentNumber ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Passport number</dt><dd className="govuk-summary-list__value">{selected.passportNumber ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Passport issue date</dt><dd className="govuk-summary-list__value">{formatDateTime(selected.passportIssueDate)}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Passport expiry date</dt><dd className="govuk-summary-list__value">{formatDateTime(selected.passportExpiryDate)}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Passport country</dt><dd className="govuk-summary-list__value">{selected.passportCountryOfIssueName ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Visa number</dt><dd className="govuk-summary-list__value">{selected.visaNumber ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Visa issue date</dt><dd className="govuk-summary-list__value">{formatDateTime(selected.visaIssueDate)}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Visa expiry date</dt><dd className="govuk-summary-list__value">{formatDateTime(selected.visaExpiryDate)}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Visa country</dt><dd className="govuk-summary-list__value">{selected.visaCountryOfIssueName ?? '—'}</dd></div>
+                  </dl>
+                ) : null}
+
+                {reviewTab === 'medical' ? (
+                  <dl className="govuk-summary-list">
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">AMED</dt><dd className="govuk-summary-list__value">{formatYesNo(selected.amed)}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">AMED details</dt><dd className="govuk-summary-list__value">{selected.amedDetails ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Allergy</dt><dd className="govuk-summary-list__value">{formatYesNo(selected.allergy)}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Allergy details</dt><dd className="govuk-summary-list__value">{selected.allergyDetails ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Severity</dt><dd className="govuk-summary-list__value">{selected.severity ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Meal / Dietary</dt><dd className="govuk-summary-list__value">{selected.mealDietaryName ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Meal details</dt><dd className="govuk-summary-list__value">{selected.mealDetails ?? '—'}</dd></div>
+                  </dl>
+                ) : null}
+
+                {reviewTab === 'contacts' ? (
+                  <dl className="govuk-summary-list">
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Point of contact</dt><dd className="govuk-summary-list__value">{selected.pointOfContactName ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Contact email</dt><dd className="govuk-summary-list__value">{selected.contactEmailAddress ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Contact number (working)</dt><dd className="govuk-summary-list__value">{selected.contactNumberWorkingHours ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Contact number (out of hours)</dt><dd className="govuk-summary-list__value">{selected.contactNumberOutOfHours ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Emergency contact</dt><dd className="govuk-summary-list__value">{selected.emergencyContactNumber ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Passenger phone</dt><dd className="govuk-summary-list__value">{selected.paxPhoneNumber ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Passenger email</dt><dd className="govuk-summary-list__value">{selected.emailOfTraveller ?? '—'}</dd></div>
+                  </dl>
+                ) : null}
+
+                {reviewTab === 'group' ? (
+                  <dl className="govuk-summary-list">
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Group id</dt><dd className="govuk-summary-list__value">{selected.groupId ?? '—'}</dd></div>
+                    <div className="govuk-summary-list__row"><dt className="govuk-summary-list__key">Group name</dt><dd className="govuk-summary-list__value">{selected.groupName ?? '—'}</dd></div>
+                  </dl>
+                ) : null}
+              </div>
+
+              <div className="govuk-grid-column-one-third">
+                <h3 className="govuk-heading-s">Comments</h3>
+                <div style={{ border: '1px solid #b1b4b6', minHeight: '260px', maxHeight: '360px', overflowY: 'auto', padding: '12px', marginBottom: '12px' }}>
+                  {commentsBusy ? <p className="govuk-body-s">Loading comments…</p> : null}
+                  {!commentsBusy && comments.length === 0 ? <p className="govuk-body-s">No comments yet.</p> : null}
+                  {comments.map((comment) => (
+                    <div key={comment.id} style={{ marginBottom: '10px', paddingBottom: '10px', borderBottom: '1px solid #d8dde0' }}>
+                      <p className="govuk-body-s govuk-!-margin-bottom-1"><strong>{comment.subject ?? 'Comment'}</strong></p>
+                      <p className="govuk-body-s govuk-!-margin-bottom-1">{comment.text}</p>
+                      <p className="govuk-body-s govuk-!-margin-bottom-0">{comment.createdBy ?? 'Unknown'} · {formatDateTime(comment.createdOn)}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="govuk-form-group">
+                  <label className="govuk-label" htmlFor="bo-comment">Add comment</label>
+                  <textarea id="bo-comment" className="govuk-textarea" rows={4} value={commentInput} onChange={(e) => setCommentInput(e.target.value)} />
+                </div>
+                <button type="button" className="govuk-button govuk-button--secondary" disabled={commentsBusy || !commentInput.trim()} onClick={() => void addComment('Booking Officer comment')}>
+                  Send comment
+                </button>
+              </div>
+            </div>
+
+            <div className="govuk-button-group" style={{ marginTop: '16px' }}>
+              <button type="button" className="govuk-button govuk-button--warning" onClick={() => setRejectOpen(true)}>
+                Reject
+              </button>
+              <button
+                type="button"
+                className="govuk-button govuk-button--secondary"
+                onClick={() => {
+                  void (async () => {
+                    if (!account || !selected) return
+                    const bookingId = extractGuidFromODataId(selected.odataId)
+                    if (!bookingId) return
+                    setBusy(true)
+                    setError(null)
+                    setSuccess(null)
+                    try {
+                      await client.updateAuthorisationStatusForPassengerBooking(account, bookingId, 'Ready for AirCore')
+                      await refreshQueue(account)
+                      setSuccess('Authorisation status updated to Ready for AirCore.')
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : 'Failed to update Authorisation status')
+                    } finally {
+                      setBusy(false)
+                    }
+                  })()
+                }}
+              >
+                Ready for AirCore
+              </button>
+              <button type="button" className="govuk-button govuk-button--secondary" onClick={() => setReviewOpen(false)}>
+                Close
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
 
-      {busy ? <p className="govuk-body">Loading…</p> : null}
+      {rejectOpen ? (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ width: '100%', maxWidth: '700px', background: '#fff', padding: '24px' }}>
+            <h2 className="govuk-heading-m">Provide reason for rejection</h2>
+            <div className="govuk-form-group">
+              <label className="govuk-label" htmlFor="rejection-reason">Reason</label>
+              <textarea id="rejection-reason" className="govuk-textarea" rows={6} value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} />
+            </div>
 
-      {!busy && !error && rows.length === 0 ? (
-        <p className="govuk-body">No requests found.</p>
-      ) : null}
-
-      {!busy && !error && rows.length > 0 ? (
-        <table className="govuk-table">
-          <thead className="govuk-table__head">
-            <tr className="govuk-table__row">
-              <th scope="col" className="govuk-table__header">Surname</th>
-              <th scope="col" className="govuk-table__header">Forenames</th>
-              <th scope="col" className="govuk-table__header">From</th>
-              <th scope="col" className="govuk-table__header">To</th>
-              <th scope="col" className="govuk-table__header">Status</th>
-              <th scope="col" className="govuk-table__header">Departing</th>
-              <th scope="col" className="govuk-table__header">Returning</th>
-              <th scope="col" className="govuk-table__header">Created</th>
-            </tr>
-          </thead>
-          <tbody className="govuk-table__body">
-            {rows.map((r, idx) => (
-              <tr
-                className="govuk-table__row"
-                key={r.id ?? String(idx)}
-                onClick={() => {
-                  setSelected(r)
-                  setEdit({
-                    surname: r.surname ?? '',
-                    forenames: r.forenames ?? '',
-                    departingFromIata: r.departingFromIata ?? '',
-                    destinationIata: r.destinationIata ?? '',
-                    departingOn: toDateTimeLocalValue(r.departingOn),
-                    returningOn: toDateTimeLocalValue(r.returningOn),
-                  })
-                }}
-                style={{ cursor: 'pointer' }}
-              >
-                <td className="govuk-table__cell">{r.surname ?? ''}</td>
-                <td className="govuk-table__cell">{r.forenames ?? ''}</td>
-                <td className="govuk-table__cell">{r.departingFromIata ?? ''}</td>
-                <td className="govuk-table__cell">{r.destinationIata ?? ''}</td>
-                <td className="govuk-table__cell">{r.transportRequestStatusLabel ?? ''}</td>
-                <td className="govuk-table__cell">{formatDateTime(r.departingOn)}</td>
-                <td className="govuk-table__cell">{formatDateTime(r.returningOn)}</td>
-                <td className="govuk-table__cell">{formatDateTime(r.createdOn)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : null}
-
-      {selected ? (
-        <div className="govuk-!-margin-top-6">
-          <h2 className="govuk-heading-m">Edit request</h2>
-
-          <p className="govuk-body">
-            <strong>Status:</strong> {selected.transportRequestStatusLabel ?? ''}
-          </p>
-
-          <div className="govuk-form-group">
-            <label className="govuk-label">Surname</label>
-            <input
-              className="govuk-input"
-              value={edit.surname}
-              onChange={(e) => setEdit((s) => ({ ...s, surname: e.target.value }))}
-            />
-          </div>
-
-          <div className="govuk-form-group">
-            <label className="govuk-label">Forenames</label>
-            <input
-              className="govuk-input"
-              value={edit.forenames}
-              onChange={(e) => setEdit((s) => ({ ...s, forenames: e.target.value }))}
-            />
-          </div>
-
-          <AirportSelect
-            label="Departing from"
-            valueIata={edit.departingFromIata}
-            onChange={(a) => setEdit((s) => ({ ...s, departingFromIata: a.iata }))}
-          />
-
-          <AirportSelect
-            label="Destination"
-            valueIata={edit.destinationIata}
-            onChange={(a) => setEdit((s) => ({ ...s, destinationIata: a.iata }))}
-          />
-
-          <div className="govuk-form-group">
-            <label className="govuk-label">Departing on</label>
-            <input
-              type="datetime-local"
-              className="govuk-input"
-              value={edit.departingOn}
-              onChange={(e) => setEdit((s) => ({ ...s, departingOn: e.target.value }))}
-            />
-          </div>
-
-          <div className="govuk-form-group">
-            <label className="govuk-label">Returning on</label>
-            <input
-              type="datetime-local"
-              className="govuk-input"
-              value={edit.returningOn}
-              onChange={(e) => setEdit((s) => ({ ...s, returningOn: e.target.value }))}
-            />
-          </div>
-
-          <div className="govuk-button-group">
-            <button
-              type="button"
-              className="govuk-button govuk-button--secondary"
-              disabled={busy}
-              onClick={() => {
-                void updateStatus('In Progress')
-              }}
-            >
-              Pick up (In Progress)
-            </button>
-
-            <button
-              type="button"
-              className="govuk-button govuk-button--secondary"
-              disabled={busy}
-              onClick={() => {
-                void updateStatus('Approved')
-              }}
-            >
-              Approve
-            </button>
-
-            <button
-              type="button"
-              className="govuk-button govuk-button--secondary"
-              disabled={busy}
-              onClick={() => {
-                void updateStatus('Rejected')
-              }}
-            >
-              Reject
-            </button>
-
-            <button
-              type="button"
-              className="govuk-button govuk-button--secondary"
-              disabled={busy}
-              onClick={() => {
-                void updateStatus('Cancelled')
-              }}
-            >
-              Cancel
-            </button>
-
-            <button
-              type="button"
-              className="govuk-button"
-              disabled={busy}
-              onClick={() => {
-                void (async () => {
-                  setError(null)
-                  setSuccess(null)
-
-                  const acct = (instance.getActiveAccount() ?? accounts[0]) as AccountInfo | undefined
-                  if (!acct) {
-                    setError('No signed-in account available')
-                    return
-                  }
-
-                  try {
-                    setBusy(true)
-                    await client.updatePassengerRequest(acct, selected, {
-                      surname: edit.surname,
-                      forenames: edit.forenames,
-                      departingFromIata: edit.departingFromIata,
-                      destinationIata: edit.destinationIata,
-                      departingOn: edit.departingOn,
-                      returningOn: edit.returningOn,
-                    })
-
-                    const res = await client.listAllPassengerRequests(acct)
-                    setRows(res)
-                    setSuccess('Request updated')
-                  } catch (e) {
-                    setError(e instanceof Error ? e.message : 'Update failed')
-                  } finally {
-                    setBusy(false)
-                  }
-                })()
-              }}
-            >
-              Save changes
-            </button>
-            <button
-              type="button"
-              className="govuk-button govuk-button--secondary"
-              onClick={() => {
-                setSelected(null)
-                setError(null)
-                setSuccess(null)
-              }}
-            >
-              Close
-            </button>
+            <div className="govuk-button-group">
+              <button type="button" className="govuk-button govuk-button--warning" disabled={busy || !rejectReason.trim()} onClick={() => void rejectSelected()}>
+                Confirm rejection
+              </button>
+              <button type="button" className="govuk-button govuk-button--secondary" onClick={() => setRejectOpen(false)}>
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

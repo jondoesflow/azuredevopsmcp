@@ -1,0 +1,50 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<savedqueries xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <savedquery>
+    <IsCustomizable>1</IsCustomizable>
+    <CanBeDeleted>1</CanBeDeleted>
+    <isquickfindquery>0</isquickfindquery>
+    <isprivate>0</isprivate>
+    <isdefault>0</isdefault>
+    <savedqueryid>{4eadafed-b710-f111-8342-7c1e5278887b}</savedqueryid>
+    <layoutxml>
+      <grid name="resultset" jump="cap_groupname" select="1" icon="1" preview="1">
+        <row name="result" id="cap_groupid">
+          <cell name="cap_groupname" width="300" />
+          <cell name="cap_authorisationreference" width="178" />
+          <cell name="cap_authoriser" width="100" />
+          <cell name="cap_passengercount" width="134" />
+          <cell name="a_30cadec3931c4194bfb7facc87f5d823.cap_authorisationstatus" width="305" />
+        </row>
+      </grid>
+    </layoutxml>
+    <querytype>0</querytype>
+    <fetchxml>
+      <fetch version="1.0" mapping="logical" distinct="true">
+        <entity name="cap_group">
+          <attribute name="cap_groupid" />
+          <attribute name="cap_groupname" />
+          <order attribute="cap_groupname" descending="false" />
+          <attribute name="cap_authorisationreference" />
+          <attribute name="cap_authoriser" />
+          <attribute name="cap_passengercount" />
+          <filter type="and">
+            <condition attribute="statecode" operator="eq" value="0" />
+          </filter>
+          <link-entity name="cap_authorisation" alias="aa" link-type="inner" from="cap_authorisationid" to="cap_authorisationreference">
+            <filter type="and">
+              <condition attribute="cap_authorisationstatus" operator="eq" value="764820000" />
+            </filter>
+          </link-entity>
+          <link-entity alias="a_30cadec3931c4194bfb7facc87f5d823" name="cap_authorisation" to="cap_authorisationreference" from="cap_authorisationid" link-type="outer" visible="false">
+            <attribute name="cap_authorisationstatus" />
+          </link-entity>
+        </entity>
+      </fetch>
+    </fetchxml>
+    <IntroducedVersion>1.0.0.0</IntroducedVersion>
+    <LocalizedNames>
+      <LocalizedName description="Pending Authoriser Approval Group" languagecode="1033" />
+    </LocalizedNames>
+  </savedquery>
+</savedqueries>

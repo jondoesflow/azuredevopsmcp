@@ -1,18 +1,22 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { useMsal } from '@azure/msal-react'
-import { useAuthz } from '../authz/AuthzProvider'
-import { isBookingOfficer, isHrPersonnel } from '../authz/authz'
+import { useAuthz } from '../authz/useAuthz'
+import { canAccessAdmin } from '../authz/authz'
 import { env } from '../config'
+import { loginExternalSignInWithRedirect, loginExternalSignUpWithRedirect } from '../auth/externalMsal'
+import { getExternalSession } from '../auth/externalSession'
 
 export function LandingPage() {
   const { instance, accounts } = useMsal()
   const authz = useAuthz()
   const navigate = useNavigate()
   const account = instance.getActiveAccount() ?? accounts[0]
+  const externalSession = getExternalSession()
+  const isSignedIn = Boolean(account || externalSession)
 
   async function handleStartNow() {
-    if (!account) {
-      const scope = `${env.dataverseUrl.replace(/\/$/, '')}/.default`
+    if (!isSignedIn) {
+      const scope = env.dataverseScope
       await instance.loginRedirect({
         scopes: [scope],
         redirectStartPage: window.location.href,
@@ -21,14 +25,7 @@ export function LandingPage() {
     }
 
     if (authz.loading) return
-
-    if (isBookingOfficer(authz.roles)) {
-      navigate('/booking-queue')
-    } else if (isHrPersonnel(authz.roles)) {
-      navigate('/hr-request')
-    } else {
-      navigate('/request')
-    }
+    navigate('/request-options')
   }
 
   return (
@@ -54,11 +51,35 @@ export function LandingPage() {
             >
               {authz.loading ? 'Loading…' : 'Start now'}
             </button>
-            {account && (isBookingOfficer(authz.roles) || isHrPersonnel(authz.roles)) && (
+            {isSignedIn && canAccessAdmin(authz.roles) && (
               <Link to="/admin" className="govuk-link">
                 Admin queue
               </Link>
             )}
+            {!account && !externalSession && env.aadExternalAuthority && env.aadExternalClientId ? (
+              <>
+                <button
+                  type="button"
+                  className="govuk-button govuk-button--secondary"
+                  onClick={() => {
+                    sessionStorage.setItem('externalOnboardingPending', '1')
+                    void loginExternalSignUpWithRedirect()
+                  }}
+                >
+                  Register new external account
+                </button>
+                <button
+                  type="button"
+                  className="govuk-button govuk-button--secondary"
+                  onClick={() => {
+                    sessionStorage.setItem('externalOnboardingPending', '1')
+                    void loginExternalSignInWithRedirect()
+                  }}
+                >
+                  External sign in
+                </button>
+              </>
+            ) : null}
           </div>
         </div>
       </div>

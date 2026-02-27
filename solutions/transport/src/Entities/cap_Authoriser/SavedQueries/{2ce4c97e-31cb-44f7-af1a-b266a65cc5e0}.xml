@@ -1,0 +1,39 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<savedqueries xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <savedquery>
+    <IsCustomizable>1</IsCustomizable>
+    <CanBeDeleted>0</CanBeDeleted>
+    <isquickfindquery>0</isquickfindquery>
+    <isprivate>0</isprivate>
+    <isdefault>1</isdefault>
+    <savedqueryid>{2ce4c97e-31cb-44f7-af1a-b266a65cc5e0}</savedqueryid>
+    <layoutxml>
+      <grid name="resultset" jump="cap_authorisername" select="1" icon="1" preview="1">
+        <row name="result" id="cap_authoriserid">
+          <cell name="cap_authorisername" width="300" />
+          <cell name="cap_authoriseremail" width="135" />
+          <cell name="cap_bookingoffice" width="128" />
+        </row>
+      </grid>
+    </layoutxml>
+    <querytype>0</querytype>
+    <fetchxml>
+      <fetch version="1.0" mapping="logical">
+        <entity name="cap_authoriser">
+          <attribute name="cap_authoriserid" />
+          <attribute name="cap_authorisername" />
+          <order attribute="cap_authorisername" descending="false" />
+          <filter type="and">
+            <condition attribute="statecode" operator="eq" value="0" />
+          </filter>
+          <attribute name="cap_authoriseremail" />
+          <attribute name="cap_bookingoffice" />
+        </entity>
+      </fetch>
+    </fetchxml>
+    <IntroducedVersion>1.0</IntroducedVersion>
+    <LocalizedNames>
+      <LocalizedName description="Active Authorisers" languagecode="1033" />
+    </LocalizedNames>
+  </savedquery>
+</savedqueries>

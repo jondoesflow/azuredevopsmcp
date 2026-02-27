@@ -1,0 +1,37 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<savedqueries xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <savedquery>
+    <IsCustomizable>1</IsCustomizable>
+    <CanBeDeleted>0</CanBeDeleted>
+    <isquickfindquery>0</isquickfindquery>
+    <isprivate>0</isprivate>
+    <isdefault>0</isdefault>
+    <savedqueryid>{85cfc603-2424-424d-845a-42bd6b40c503}</savedqueryid>
+    <layoutxml>
+      <grid name="resultset" jump="cap_rankname" select="1" icon="1" preview="1">
+        <row name="result" id="cap_rankid">
+          <cell name="cap_rankname" width="300" />
+          <cell name="createdon" width="125" />
+        </row>
+      </grid>
+    </layoutxml>
+    <querytype>0</querytype>
+    <fetchxml>
+      <fetch version="1.0" mapping="logical">
+        <entity name="cap_rank">
+          <attribute name="cap_rankid" />
+          <attribute name="cap_rankname" />
+          <attribute name="createdon" />
+          <order attribute="cap_rankname" descending="false" />
+          <filter type="and">
+            <condition attribute="statecode" operator="eq" value="1" />
+          </filter>
+        </entity>
+      </fetch>
+    </fetchxml>
+    <IntroducedVersion>1.0</IntroducedVersion>
+    <LocalizedNames>
+      <LocalizedName description="Inactive Ranks" languagecode="1033" />
+    </LocalizedNames>
+  </savedquery>
+</savedqueries>

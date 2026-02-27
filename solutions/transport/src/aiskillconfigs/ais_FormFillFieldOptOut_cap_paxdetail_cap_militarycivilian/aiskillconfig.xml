@@ -1,0 +1,15 @@
+<aiskillconfig uniquename="ais_FormFillFieldOptOut_cap_paxdetail_cap_militarycivilian">
+  <aiskill>FormFillFieldOptOut</aiskill>
+  <attribute>
+    <entityid.logicalname>cap_paxdetail</entityid.logicalname>
+    <logicalname>cap_militarycivilian</logicalname>
+  </attribute>
+  <description>cap_paxdetail - Military Civilian Form fill opt out</description>
+  <entity>
+    <logicalname>cap_paxdetail</logicalname>
+  </entity>
+  <iscustomizable>1</iscustomizable>
+  <scope>1</scope>
+  <statecode>0</statecode>
+  <statuscode>1</statuscode>
+</aiskillconfig>
