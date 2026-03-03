@@ -6,3 +6,6 @@ dist/
 
 # Local deployment/debug artifacts
 aci-logs.txt
+
+# Private notes/prompts (kept local)
+mcp-server/_private/
