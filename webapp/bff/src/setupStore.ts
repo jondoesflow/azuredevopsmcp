@@ -1,7 +1,48 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { SetupConnectionInput, SetupConnectionState } from "./types.js";
+
+// Derive a 32-byte key from SETUP_ENCRYPTION_KEY env var (or a fallback for dev).
+// In production, set SETUP_ENCRYPTION_KEY to a long random string.
+const RAW_KEY = process.env.SETUP_ENCRYPTION_KEY ?? "dev-only-insecure-key-set-SETUP_ENCRYPTION_KEY";
+const ENCRYPTION_KEY = scryptSync(RAW_KEY, "mcp-setup-store", 32);
+const ALGORITHM = "aes-256-gcm";
+
+function encrypt(plain: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  // Format: iv:tag:ciphertext (all hex)
+  return `${iv.toString("hex")}:${tag.toString("hex")}:${encrypted.toString("hex")}`;
+}
+
+function decrypt(stored: string): string {
+  const parts = stored.split(":");
+  if (parts.length !== 3) return stored; // not encrypted — return as-is (migration path)
+  const [ivHex, tagHex, dataHex] = parts as [string, string, string];
+  const iv = Buffer.from(ivHex, "hex");
+  const tag = Buffer.from(tagHex, "hex");
+  const data = Buffer.from(dataHex, "hex");
+  const decipher = createDecipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+  decipher.setAuthTag(tag);
+  return decipher.update(data).toString("utf8") + decipher.final("utf8");
+}
+
+function encryptSecret(value: string | undefined): string | undefined {
+  return value ? encrypt(value) : undefined;
+}
+
+function decryptSecret(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    return decrypt(value);
+  } catch {
+    return undefined; // corrupted or wrong key — treat as missing
+  }
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -69,14 +110,38 @@ function readPerUser(): Record<string, StoredUserConfig> {
     if (!parsed || typeof parsed !== "object") {
       return {};
     }
-    return parsed;
+    const decrypted: Record<string, StoredUserConfig> = {};
+    for (const [userId, config] of Object.entries(parsed)) {
+      decrypted[userId] = decryptStoredUserConfig(config);
+    }
+    return decrypted;
   } catch {
     return {};
   }
 }
 
+function encryptStoredUserConfig(config: StoredUserConfig): StoredUserConfig {
+  return {
+    ...config,
+    azureDevOpsPat: encryptSecret(config.azureDevOpsPat),
+    jiraApiToken: encryptSecret(config.jiraApiToken),
+  };
+}
+
+function decryptStoredUserConfig(config: StoredUserConfig): StoredUserConfig {
+  return {
+    ...config,
+    azureDevOpsPat: decryptSecret(config.azureDevOpsPat),
+    jiraApiToken: decryptSecret(config.jiraApiToken),
+  };
+}
+
 function writePerUser(data: Record<string, StoredUserConfig>): void {
-  fs.writeFileSync(perUserPath, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
+  const encrypted: Record<string, StoredUserConfig> = {};
+  for (const [userId, config] of Object.entries(data)) {
+    encrypted[userId] = encryptStoredUserConfig(config);
+  }
+  fs.writeFileSync(perUserPath, `${JSON.stringify(encrypted, null, 2)}\n`, "utf-8");
 }
 
 function writeEnv(updates: Map<string, string>): void {

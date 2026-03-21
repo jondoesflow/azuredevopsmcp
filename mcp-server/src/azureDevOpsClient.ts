@@ -252,24 +252,31 @@ export class AzureDevOpsClient {
 
   async listWorkItems(filter: WorkItemFilter): Promise<WorkItem[]> {
     logger.info("Listing work items", { project: filter.project, type: filter.witType });
-    
+
     try {
       const witApi = await this.getWitApi();
-      
-      // Build WIQL query
-      let wiql = `SELECT [System.Id], [System.Title], [System.State], [System.AssignedTo], [System.WorkItemType], [System.Description] FROM WorkItems WHERE [System.TeamProject] = '${filter.project}' AND [System.WorkItemType] = '${filter.witType}'`;
+
+      // Sanitize string values to prevent WIQL injection (escape single quotes)
+      const sanitizeWiql = (value: string): string => value.replace(/'/g, "''");
+
+      // Build WIQL query using sanitized values
+      let wiql = `SELECT [System.Id], [System.Title], [System.State], [System.AssignedTo], [System.WorkItemType], [System.Description] FROM WorkItems WHERE [System.TeamProject] = '${sanitizeWiql(filter.project)}' AND [System.WorkItemType] = '${sanitizeWiql(filter.witType)}'`;
 
       if (filter.state) {
-        wiql += ` AND [System.State] = '${filter.state}'`;
+        wiql += ` AND [System.State] = '${sanitizeWiql(filter.state)}'`;
       }
 
       if (filter.assignedTo) {
-        wiql += ` AND [System.AssignedTo] = '${filter.assignedTo}'`;
+        wiql += ` AND [System.AssignedTo] = '${sanitizeWiql(filter.assignedTo)}'`;
       }
 
-      // For child items, filter by parent
+      // For child items, filter by parent (coerce to integer to prevent injection)
       if (filter.parentId) {
-        wiql += ` AND [System.Parent] = ${filter.parentId}`;
+        const parentId = Math.trunc(Number(filter.parentId));
+        if (!Number.isFinite(parentId) || parentId <= 0) {
+          throw new Error("Invalid parentId");
+        }
+        wiql += ` AND [System.Parent] = ${parentId}`;
       }
 
       wiql += " ORDER BY [System.Id] DESC";

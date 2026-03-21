@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import express, { Request, Response, NextFunction } from "express";
+import helmet from "helmet";
+import { rateLimit } from "express-rate-limit";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -13,7 +16,7 @@ import { workItemTools, handleWorkItemTool, getFileStore } from "./tools/workIte
 const PORT = Number.parseInt(process.env.PORT || "80", 10);
 const TRANSPORT_MODE = process.env.TRANSPORT_MODE || "http"; // "http" or "stdio"
 const API_KEY = process.env.MCP_API_KEY || "";
-const CORS_ALLOWED_ORIGIN = process.env.CORS_ALLOWED_ORIGIN || "*";
+const CORS_ALLOWED_ORIGIN = process.env.CORS_ALLOWED_ORIGIN || "";
 
 // Initialize config and Azure DevOps client
 const config = loadConfig();
@@ -173,6 +176,15 @@ function createMcpServer(clients: WorkItemClients): Server {
   return server;
 }
 
+// Sanitize a file name: extract basename and reject traversal or unsafe characters
+function sanitizeFileName(rawName: string): string | null {
+  const base = path.basename(rawName);
+  if (!base || base === "." || base === ".." || /[/\\<>:"|?*\x00-\x1f]/.test(base)) {
+    return null;
+  }
+  return base;
+}
+
 // Extract nested JSON content from Power Automate trigger body
 function extractNestedContent(raw: string, fileName: string): string {
   if (typeof raw !== "string" || !raw.trimStart().startsWith("{")) return raw;
@@ -226,15 +238,23 @@ async function startHttpServer() {
     logger.warn("MCP_API_KEY is not configured. HTTP endpoints are running without API key auth.");
   }
 
+  if (!CORS_ALLOWED_ORIGIN) {
+    logger.warn("CORS_ALLOWED_ORIGIN is not set. Cross-origin requests will be blocked.");
+  }
+
+  app.use(helmet());
+
   // Store active transports by session ID
   const transports: Record<string, StreamableHTTPServerTransport> = {};
 
-  // CORS
+  // CORS — only allow explicitly configured origins; no wildcard fallback
   app.use((req, res, next) => {
-    res.setHeader("Access-Control-Allow-Origin", CORS_ALLOWED_ORIGIN);
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, x-api-key, apikey, mcp-session-id");
-    res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
+    if (CORS_ALLOWED_ORIGIN) {
+      res.setHeader("Access-Control-Allow-Origin", CORS_ALLOWED_ORIGIN);
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, x-api-key, apikey, mcp-session-id");
+      res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
+    }
     if (req.method === "OPTIONS") {
       res.sendStatus(204);
       return;
@@ -348,8 +368,16 @@ async function startHttpServer() {
     }
   }
 
+  const uploadRateLimit = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 20,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "Too many upload requests. Please try again later." },
+  });
+
   // File upload endpoint (REST, not MCP) - accepts JSON body with fileName and fileContent
-  app.post("/upload", apiKeyAuth, express.json({ limit: "50mb" }), (req: Request, res: Response) => {
+  app.post("/upload", apiKeyAuth, uploadRateLimit, express.json({ limit: "50mb" }), (req: Request, res: Response) => {
     try {
       const { fileName, fileContent, contentType } = req.body;
 
@@ -358,10 +386,16 @@ async function startHttpServer() {
         return;
       }
 
-      logger.info("Upload received", { fileName, contentLength: fileContent.length });
+      const safeFileName = sanitizeFileName(fileName);
+      if (!safeFileName) {
+        res.status(400).json({ error: "Invalid file name" });
+        return;
+      }
 
-      const extracted = extractNestedContent(fileContent, fileName);
-      const { content, error } = decodeUploadContent(extracted, fileName);
+      logger.info("Upload received", { fileName: safeFileName, contentLength: fileContent.length });
+
+      const extracted = extractNestedContent(fileContent, safeFileName);
+      const { content, error } = decodeUploadContent(extracted, safeFileName);
 
       if (error) {
         res.status(400).json({ error });
@@ -369,15 +403,15 @@ async function startHttpServer() {
       }
 
       const fileStore = getFileStore();
-      fileStore.set(fileName, {
-        name: fileName,
+      fileStore.set(safeFileName, {
+        name: safeFileName,
         content,
         mimeType: contentType || "text/plain",
         uploadedAt: new Date(),
       });
 
-      logger.info("File uploaded via REST", { fileName, size: content.length });
-      res.json({ result: "success", fileName, size: content.length, contentType: contentType || "text/plain" });
+      logger.info("File uploaded via REST", { fileName: safeFileName, size: content.length });
+      res.json({ result: "success", fileName: safeFileName, size: content.length, contentType: contentType || "text/plain" });
     } catch (error) {
       logger.error("Error handling file upload", error);
       res.status(500).json({ error: "Upload failed" });

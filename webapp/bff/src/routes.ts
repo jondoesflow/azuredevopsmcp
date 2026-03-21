@@ -1,8 +1,42 @@
+import path from "node:path";
 import express, { Request, Response } from "express";
+import { rateLimit } from "express-rate-limit";
 import { buildHelpMessage, parseChatIntent } from "./chat/intents.js";
 import { AppConfig, AuthenticatedUser, ChatRequestBody, SetupConnectionInput } from "./types.js";
 import { McpClient } from "./mcpClient.js";
 import { SetupStore } from "./setupStore.js";
+
+const validateRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Too many validation attempts. Please try again later." },
+});
+
+const uploadRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Too many upload requests. Please try again later." },
+});
+
+const chatRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 60,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Too many chat requests. Please try again later." },
+});
+
+const processRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Too many process requests. Please try again later." },
+});
 
 const fallbackFacts = [
   "The first computer bug was an actual moth trapped in a relay.",
@@ -48,6 +82,19 @@ function parseProcessBody(req: Request): { project?: string; analysisMode: "proc
 
 function isTextFile(fileName: string): boolean {
   return fileName.toLowerCase().endsWith(".txt");
+}
+
+/**
+ * Returns the sanitized basename or null if the name contains traversal
+ * sequences, path separators, null bytes, or other dangerous characters.
+ */
+function sanitizeFileName(rawName: string): string | null {
+  const base = path.basename(rawName);
+  // Reject empty, dot-only names, or anything with unsafe characters
+  if (!base || base === "." || base === ".." || /[/\\<>:"|?*\x00-\x1f]/.test(base)) {
+    return null;
+  }
+  return base;
 }
 
 function toConnectionHeaders(input: SetupConnectionInput): Record<string, string> {
@@ -189,7 +236,7 @@ export function createApiRouter(config: AppConfig) {
     }
   });
 
-  router.post("/setup/validate", async (req: Request, res: Response) => {
+  router.post("/setup/validate", validateRateLimit, async (req: Request, res: Response) => {
     try {
       const userId = getUserId(req);
       const body = parseSetupBody(req);
@@ -260,7 +307,7 @@ export function createApiRouter(config: AppConfig) {
     }
   });
 
-  router.post("/files/upload", async (req: Request, res: Response) => {
+  router.post("/files/upload", uploadRateLimit, async (req: Request, res: Response) => {
     const { fileName, fileContent, contentType } = req.body as {
       fileName?: unknown;
       fileContent?: unknown;
@@ -272,9 +319,15 @@ export function createApiRouter(config: AppConfig) {
       return;
     }
 
+    const safeFileName = sanitizeFileName(fileName);
+    if (!safeFileName) {
+      res.status(400).json({ error: "Invalid file name" });
+      return;
+    }
+
     try {
       const mcpClient = createMcpClient(req);
-      const response = await mcpClient.uploadFile(fileName, fileContent, typeof contentType === "string" ? contentType : "text/plain");
+      const response = await mcpClient.uploadFile(safeFileName, fileContent, typeof contentType === "string" ? contentType : "text/plain");
       res.json(response);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to upload file";
@@ -298,7 +351,7 @@ export function createApiRouter(config: AppConfig) {
     }
   });
 
-  router.post("/process/document", async (req: Request, res: Response) => {
+  router.post("/process/document", processRateLimit, async (req: Request, res: Response) => {
     const processRequest = parseProcessBody(req);
 
     try {
@@ -382,7 +435,7 @@ export function createApiRouter(config: AppConfig) {
     }
   });
 
-  router.post("/chat/message", async (req: Request, res: Response) => {
+  router.post("/chat/message", chatRateLimit, async (req: Request, res: Response) => {
     const chatRequest = parseMessageBody(req);
     if (!chatRequest) {
       res.status(400).json({ error: "message is required" });
