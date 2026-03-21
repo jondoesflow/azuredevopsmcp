@@ -660,7 +660,7 @@ export function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Document processing failed";
       logLine(`Document processing failed: ${message}`);
-      logLine("Please retry from Step 5.");
+      logLine("Please retry from Step 3.");
       setError(message);
     } finally {
       stopProgressVisuals();
@@ -763,7 +763,7 @@ export function App() {
       {showEnrichmentFieldsPage ? renderEnrichmentFieldsPage() : !connectionReady ? (
         <main className="wizard-layout">
           <section className="panel control-panel">
-            <h2>Step 2: Choose platform</h2>
+            <h2>Step 1: Choose platform</h2>
             <p>Are you importing into Azure DevOps or Jira?</p>
             <div className="platform-choice">
               <button className={selectedPlatform === "azure-devops" ? "selected" : ""} onClick={() => void choosePlatform("azure-devops")}>Azure DevOps</button>
@@ -784,7 +784,7 @@ export function App() {
 
             {selectedPlatform && (connectionChoiceAcknowledged || !hasSavedConnectionFor(selectedPlatform)) ? (
               <>
-                <h2>Step 3: Enter connection details</h2>
+                <h2>Step 2: Enter connection details</h2>
                 {renderConnectionFields()}
                 <div className="setup-actions">
                   <button disabled={validatingConnection} onClick={() => void saveConnectionDetails()}>Save details</button>
@@ -799,7 +799,7 @@ export function App() {
               </>
             ) : null}
 
-            <h2>Step 5: Upload + analysis</h2>
+            <h2>Step 3: Upload + analysis</h2>
             <p>Connected platform: <strong>{activePlatform === "jira" ? "Jira" : "Azure DevOps"}</strong></p>
             <p>Project: <strong>{configuredProject || "(from validated setup)"}</strong></p>
 
@@ -845,7 +845,7 @@ export function App() {
       ) : (
         <main className="layout">
           <section className="panel control-panel">
-            <h2>Step 5: Upload + analysis</h2>
+            <h2>Step 3: Upload + analysis</h2>
             <p>Connected platform: <strong>{activePlatform === "jira" ? "Jira" : "Azure DevOps"}</strong></p>
             <p>Project: <strong>{configuredProject}</strong></p>
 
@@ -899,7 +899,7 @@ export function App() {
             ) : null}
             {boardUrl ? (
               <div className="setup-status">
-                Step 7: <a href={boardUrl} target="_blank" rel="noreferrer">Open board</a>
+                Step 4: <a href={boardUrl} target="_blank" rel="noreferrer">Open board</a>
               </div>
             ) : null}
             {renderLowConfidenceDashboard()}
