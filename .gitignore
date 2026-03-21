@@ -3,6 +3,7 @@ dist/
 .env
 .env.local
 *.log
+branding/
 
 # Local deployment/debug artifacts
 aci-logs.txt

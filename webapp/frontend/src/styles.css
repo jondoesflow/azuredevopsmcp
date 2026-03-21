@@ -1,7 +1,7 @@
 :root {
   color-scheme: light;
-  font-family: "Segoe UI", "Trebuchet MS", sans-serif;
-  background: radial-gradient(circle at 20% 20%, #f6f8ff 0%, #eaf4ff 48%, #eef7f0 100%);
+  font-family: "Gill Sans", "Gill Sans MT", "Trebuchet MS", "Segoe UI", sans-serif;
+  background: radial-gradient(circle at 20% 20%, #f0f5fb 0%, #e6f0fa 48%, #edf4fb 100%);
   color: #11223b;
 }
 
@@ -46,11 +46,11 @@ select {
 }
 
 .hero {
-  background: linear-gradient(115deg, #0f4fa8, #1b7f73);
+  background: linear-gradient(115deg, #0058ab, #003d7a);
   color: #fff;
   border-radius: 16px;
   padding: 24px;
-  box-shadow: 0 12px 30px rgba(11, 37, 78, 0.22);
+  box-shadow: 0 12px 30px rgba(0, 88, 171, 0.28);
 }
 
 .hero h1 {
@@ -145,7 +145,7 @@ select {
   width: 10px;
   height: 10px;
   border-radius: 999px;
-  background: #1259b8;
+  background: #0058ab;
   animation: pulse-dot 0.8s ease-in-out infinite;
 }
 
@@ -168,7 +168,7 @@ select {
 }
 
 .platform-choice .selected {
-  background: #0f4676;
+  background: #003d7a;
 }
 
 .setup-status {
@@ -205,7 +205,7 @@ button {
   border: none;
   border-radius: 10px;
   padding: 10px 12px;
-  background: #1259b8;
+  background: #0058ab;
   color: #fff;
   cursor: pointer;
 }

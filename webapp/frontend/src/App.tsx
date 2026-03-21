@@ -730,7 +730,8 @@ export function App() {
     return (
       <div className="signin-shell">
         <section className="signin-card">
-          <h1>Internal Backlog Assistant</h1>
+          <img src="/capgemini-logo-blue.svg" alt="Capgemini" style={{ width: 200, margin: "0 auto" }} />
+          <h1>Backlog Assistant</h1>
           <p>Sign in to continue.</p>
           <div className="inline-action-row">
             <button onClick={signIn}>Sign in with Entra ID</button>
@@ -745,7 +746,8 @@ export function App() {
   return (
     <div className="page">
       <header className="hero">
-        <h1>Internal Backlog Assistant</h1>
+        <img src="/capgemini-logo-white.svg" alt="Capgemini" style={{ height: 36, marginBottom: 8, display: "block" }} />
+        <h1>Backlog Assistant</h1>
         <p>Secure web interface for Azure DevOps and Jira backlog creation.</p>
         <div className="auth-row">
           <span>Signed in as {account?.username}</span>
