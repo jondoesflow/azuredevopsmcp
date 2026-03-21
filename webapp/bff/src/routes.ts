@@ -340,9 +340,7 @@ export function createApiRouter(config: AppConfig) {
       const mcpClient = createMcpClient(_req);
       const files = await mcpClient.listFiles();
 
-      for (const file of files.files) {
-        await mcpClient.executeTool("delete_file", { fileName: file.fileName });
-      }
+      await Promise.all(files.files.map((file) => mcpClient.executeTool("delete_file", { fileName: file.fileName })));
 
       res.json({ deleted: files.count });
     } catch (error) {
@@ -396,22 +394,11 @@ export function createApiRouter(config: AppConfig) {
         return;
       }
 
-      const analysis = await mcpClient.executeTool("analyse_document", {
-        fileName,
-        analysisMode: processRequest.analysisMode,
-      });
-
-      const review = await mcpClient.executeTool("preview_backlog", {
-        processFileName: fileName,
-        fileName,
-        storyMaturity: "placeholder",
-      });
-
-      const backlog = await mcpClient.executeTool("create_backlog", {
-        processFileName: fileName,
-        project: effectiveProject,
-        storyMaturity: "placeholder",
-      });
+      const [analysis, review, backlog] = await mcpClient.executeToolsSequential([
+        { toolName: "analyse_document", args: { fileName, analysisMode: processRequest.analysisMode } },
+        { toolName: "preview_backlog", args: { processFileName: fileName, fileName, storyMaturity: "placeholder" } },
+        { toolName: "create_backlog", args: { processFileName: fileName, project: effectiveProject, storyMaturity: "placeholder" } },
+      ]);
 
       const boardUrl = setupState.platform === "jira"
         ? `${setupState.jiraBaseUrl?.replace(/\/+$/, "")}/jira/software/c/projects/${encodeURIComponent(effectiveProject)}/boards`

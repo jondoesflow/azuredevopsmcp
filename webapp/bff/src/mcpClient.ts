@@ -149,6 +149,19 @@ export class McpClient {
     }
   }
 
+  async executeToolsSequential(calls: Array<{ toolName: string; args: Record<string, unknown> }>): Promise<unknown[]> {
+    const sessionId = await this.initializeSession();
+    try {
+      const results: unknown[] = [];
+      for (const { toolName, args } of calls) {
+        results.push(await this.callTool(sessionId, toolName, args));
+      }
+      return results;
+    } finally {
+      await this.closeSession(sessionId);
+    }
+  }
+
   async uploadFile(fileName: string, fileContent: string, contentType: string): Promise<unknown> {
     const response = await fetch(`${this.baseUrl}/upload`, {
       method: "POST",

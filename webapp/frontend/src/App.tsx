@@ -746,7 +746,7 @@ export function App() {
   return (
     <div className="page">
       <header className="hero">
-        <img src="/capgemini-logo-white.svg" alt="Capgemini" style={{ height: 36, marginBottom: 8, display: "block" }} />
+        <img src="/capgemini-logo-white.svg" alt="Capgemini" style={{ height: 54, marginBottom: 8, display: "block" }} />
         <h1>Backlog Assistant</h1>
         <p>Secure web interface for Azure DevOps and Jira backlog creation.</p>
         <div className="auth-row">
