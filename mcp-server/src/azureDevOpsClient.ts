@@ -20,6 +20,7 @@ export interface WorkItemInput {
   priority?: number;
   tags?: string;
   moscow?: string;
+  customFields?: Record<string, string | number | boolean>;
 }
 
 export interface WorkItemFilter {
@@ -43,6 +44,7 @@ export interface WorkItemUpdate {
   acceptanceCriteria?: string[];
   moscow?: string;
   tags?: string;
+  customFields?: Record<string, string | number | boolean>;
 }
 
 export interface WorkItemRelationInput {
@@ -175,6 +177,16 @@ export class AzureDevOpsClient {
           path: "/fields/Custom.MoSCoW",
           value: input.moscow,
         });
+      }
+
+      if (input.customFields) {
+        for (const [fieldName, fieldValue] of Object.entries(input.customFields)) {
+          patchDocument.push({
+            op: Operation.Add,
+            path: `/fields/${fieldName}`,
+            value: fieldValue,
+          });
+        }
       }
 
       try {
@@ -373,6 +385,16 @@ export class AzureDevOpsClient {
           path: "/fields/System.Tags",
           value: update.tags,
         });
+      }
+
+      if (update.customFields) {
+        for (const [fieldName, fieldValue] of Object.entries(update.customFields)) {
+          patchDocument.push({
+            op: Operation.Replace,
+            path: `/fields/${fieldName}`,
+            value: fieldValue,
+          });
+        }
       }
 
       if (patchDocument.length === 0) {

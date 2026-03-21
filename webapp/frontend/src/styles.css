@@ -301,6 +301,66 @@ button:disabled {
   color: #754a18;
 }
 
+.fields-layout {
+  margin-top: 20px;
+}
+
+.fields-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.fields-warning {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #f0c17a;
+  background: #fff7ea;
+  color: #804108;
+}
+
+.fields-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #b8d2f0;
+  background: #eff6ff;
+  color: #1d4670;
+}
+
+.fields-table-wrap {
+  overflow-x: auto;
+  border-radius: 12px;
+  border: 1px solid #d7e4f3;
+  background: #fff;
+}
+
+.fields-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 880px;
+}
+
+.fields-table th,
+.fields-table td {
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid #e6eef8;
+  padding: 10px;
+}
+
+.fields-table th {
+  background: #f4f8fd;
+  color: #183f66;
+  font-weight: 700;
+}
+
+.fields-table td code {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.84rem;
+  color: #0f3f6c;
+}
+
 .confidence-pill {
   min-width: 38px;
   text-align: center;

@@ -24,6 +24,148 @@ type LoadingAction =
   | "delete-all"
   | "create-backlog";
 
+interface EnrichmentFieldDoc {
+  displayName: string;
+  referenceName: string;
+  type: string;
+  description: string;
+}
+
+const ENRICHMENT_FIELD_DOCS: EnrichmentFieldDoc[] = [
+  {
+    displayName: "Enrichment Confidence Overall",
+    referenceName: "Custom.EnrichmentConfidenceOverall",
+    type: "integer",
+    description: "Overall confidence score (0-100) for generated story quality and completeness.",
+  },
+  {
+    displayName: "Enrichment Confidence Title",
+    referenceName: "Custom.EnrichmentConfidenceTitle",
+    type: "string",
+    description: "Confidence sub-score for story title quality.",
+  },
+  {
+    displayName: "Enrichment Confidence Description",
+    referenceName: "Custom.EnrichmentConfidenceDescription",
+    type: "html",
+    description: "Confidence sub-score for story description quality.",
+  },
+  {
+    displayName: "Enrichment Confidence Acceptance Criteria",
+    referenceName: "Custom.EnrichmentConfidenceAcceptanceCriteria",
+    type: "integer",
+    description: "Confidence sub-score for acceptance criteria quality and completeness.",
+  },
+  {
+    displayName: "Enrichment Confidence Rationale",
+    referenceName: "Custom.EnrichmentConfidenceRationale",
+    type: "html",
+    description: "Bullet-list explanation behind confidence scoring.",
+  },
+  {
+    displayName: "Enrichment Definition of Done",
+    referenceName: "Custom.EnrichmentDefinitionofDone",
+    type: "string",
+    description: "Definition of Done checklist for the story.",
+  },
+  {
+    displayName: "Enrichment Dependencies Depends On",
+    referenceName: "Custom.EnrichmentDependenciesDependsOn",
+    type: "html",
+    description: "Stories that must be completed before this story.",
+  },
+  {
+    displayName: "Enrichment Dependencies Blocks",
+    referenceName: "Custom.EnrichmentDependenciesBlocks",
+    type: "html",
+    description: "Stories potentially blocked by this story.",
+  },
+  {
+    displayName: "Enrichment Dependencies Confidence",
+    referenceName: "Custom.EnrichmentDependenciesConfidence",
+    type: "integer",
+    description: "Confidence score (0-100) for inferred dependency links.",
+  },
+  {
+    displayName: "Enrichment Dependencies Rationale",
+    referenceName: "Custom.EnrichmentDependenciesRationale",
+    type: "html",
+    description: "Explanation of why dependency relationships were inferred.",
+  },
+  {
+    displayName: "Enrichment Missing Pieces Issues",
+    referenceName: "Custom.EnrichmentMissingPiecesIssues",
+    type: "html",
+    description: "Detected requirement gaps or unanswered questions.",
+  },
+  {
+    displayName: "Enrichment Consistency Issues",
+    referenceName: "Custom.EnrichmentConsistencyIssues",
+    type: "html",
+    description: "Cross-story consistency issues including severity and conflicts.",
+  },
+  {
+    displayName: "Enrichment Effort T Shirt Size",
+    referenceName: "Custom.EnrichmentEffortTShirtSize",
+    type: "string",
+    description: "Estimated effort bucket (XS, S, M, L, XL).",
+  },
+  {
+    displayName: "Enrichment Effort Confidence",
+    referenceName: "Custom.EnrichmentEffortConfidence",
+    type: "integer",
+    description: "Confidence score (0-100) for effort estimate.",
+  },
+  {
+    displayName: "Enrichment Effort Reasoning",
+    referenceName: "Custom.EnrichmentEffortReasoning",
+    type: "html",
+    description: "Reasoning that justifies the effort estimate.",
+  },
+  {
+    displayName: "Enrichment Quality Score",
+    referenceName: "Custom.EnrichmentQualityScore",
+    type: "integer",
+    description: "Overall story quality score (0-100).",
+  },
+  {
+    displayName: "Enrichment Quality Clarity",
+    referenceName: "Custom.EnrichmentQualityClarity",
+    type: "integer",
+    description: "Quality sub-score for clarity.",
+  },
+  {
+    displayName: "Enrichment Quality Completeness",
+    referenceName: "Custom.EnrichmentQualityCompleteness",
+    type: "integer",
+    description: "Quality sub-score for completeness.",
+  },
+  {
+    displayName: "Enrichment Quality Testability",
+    referenceName: "Custom.EnrichmentQualityTestability",
+    type: "integer",
+    description: "Quality sub-score for testability.",
+  },
+  {
+    displayName: "Enrichment Quality Consistency",
+    referenceName: "Custom.EnrichmentQualityConsistency",
+    type: "integer",
+    description: "Quality sub-score for consistency with related stories.",
+  },
+  {
+    displayName: "Enrichment Quality Issues",
+    referenceName: "Custom.EnrichmentQualityIssues",
+    type: "html",
+    description: "Quality risks or issues detected during enrichment.",
+  },
+  {
+    displayName: "Enrichment Quality Recommendations",
+    referenceName: "Custom.EnrichmentQualityRecommendations",
+    type: "html",
+    description: "Recommendations for improving story quality.",
+  },
+];
+
 export function App() {
   const { instance, accounts } = useMsal();
 
@@ -51,6 +193,7 @@ export function App() {
   const [boardUrl, setBoardUrl] = useState<string | null>(null);
   const [resultSummary, setResultSummary] = useState<Record<string, number> | null>(null);
   const [review, setReview] = useState<BacklogReviewResult | null>(null);
+  const [showEnrichmentFieldsPage, setShowEnrichmentFieldsPage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [terminalLines, setTerminalLines] = useState<string[]>([
@@ -132,6 +275,45 @@ export function App() {
           </ul>
         ) : null}
       </section>
+    );
+  }
+
+  function renderEnrichmentFieldsPage(): JSX.Element {
+    return (
+      <main className="fields-layout">
+        <section className="panel fields-panel">
+          <h2>Enrichment Field Reference</h2>
+          <p className="fields-warning">
+            These fields are <strong>Azure DevOps only</strong>. They are populated into ADO custom User Story fields during backlog creation/update.
+          </p>
+          <p className="fields-note">
+            For <strong>Jira</strong>, these values are not mapped to custom fields. Instead, enrichment details are appended at the end of the User Story description.
+          </p>
+
+          <div className="fields-table-wrap" role="region" aria-label="ADO enrichment field catalog">
+            <table className="fields-table">
+              <thead>
+                <tr>
+                  <th>Field Name</th>
+                  <th>ADO Custom Field</th>
+                  <th>Type</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ENRICHMENT_FIELD_DOCS.map((field) => (
+                  <tr key={field.referenceName}>
+                    <td>{field.displayName}</td>
+                    <td><code>{field.referenceName}</code></td>
+                    <td>{field.type}</td>
+                    <td>{field.description}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
     );
   }
 
@@ -567,13 +749,16 @@ export function App() {
         <p>Secure web interface for Azure DevOps and Jira backlog creation.</p>
         <div className="auth-row">
           <span>Signed in as {account?.username}</span>
+          <button onClick={() => setShowEnrichmentFieldsPage((current) => !current)}>
+            {showEnrichmentFieldsPage ? "Back to assistant" : "Enrichment fields"}
+          </button>
           <button onClick={() => setShowConfigModal(true)}>Configuration</button>
           <button onClick={signOut}>Sign out</button>
           {renderInlineSpinner("sign-out", "Signing out...")}
         </div>
       </header>
 
-      {!connectionReady ? (
+      {showEnrichmentFieldsPage ? renderEnrichmentFieldsPage() : !connectionReady ? (
         <main className="wizard-layout">
           <section className="panel control-panel">
             <h2>Step 2: Choose platform</h2>

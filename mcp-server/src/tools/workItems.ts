@@ -1766,14 +1766,108 @@ function buildEnrichmentSummaryHtml(enrichment: WorkItemEnrichment | undefined):
   return `<br/><br/><strong>Enrichment Summary</strong><br/>${escaped}`;
 }
 
+const ADO_ENRICHMENT_FIELDS = {
+  confidenceAcceptanceCriteria: "Custom.EnrichmentConfidenceAcceptanceCriteria",
+  confidenceDescription: "Custom.EnrichmentConfidenceDescription",
+  confidenceOverall: "Custom.EnrichmentConfidenceOverall",
+  confidenceRationale: "Custom.EnrichmentConfidenceRationale",
+  confidenceTitle: "Custom.EnrichmentConfidenceTitle",
+  consistencyIssues: "Custom.EnrichmentConsistencyIssues",
+  definitionOfDone: "Custom.EnrichmentDefinitionofDone",
+  dependenciesBlocks: "Custom.EnrichmentDependenciesBlocks",
+  dependenciesConfidence: "Custom.EnrichmentDependenciesConfidence",
+  dependenciesDependsOn: "Custom.EnrichmentDependenciesDependsOn",
+  dependenciesRationale: "Custom.EnrichmentDependenciesRationale",
+  effortConfidence: "Custom.EnrichmentEffortConfidence",
+  effortReasoning: "Custom.EnrichmentEffortReasoning",
+  effortTShirtSize: "Custom.EnrichmentEffortTShirtSize",
+  missingPiecesIssues: "Custom.EnrichmentMissingPiecesIssues",
+  qualityClarity: "Custom.EnrichmentQualityClarity",
+  qualityCompleteness: "Custom.EnrichmentQualityCompleteness",
+  qualityConsistency: "Custom.EnrichmentQualityConsistency",
+  qualityIssues: "Custom.EnrichmentQualityIssues",
+  qualityRecommendations: "Custom.EnrichmentQualityRecommendations",
+  qualityScore: "Custom.EnrichmentQualityScore",
+  qualityTestability: "Custom.EnrichmentQualityTestability",
+} as const;
+
+function toHtmlList(values: string[] | undefined): string | undefined {
+  const items = (values ?? []).map((value) => value.trim()).filter(Boolean);
+  if (items.length === 0) return undefined;
+  return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function buildAdoEnrichmentCustomFields(enrichment: WorkItemEnrichment): Record<string, string | number | boolean> {
+  const customFields: Record<string, string | number | boolean> = {};
+
+  if (enrichment.confidence) {
+    customFields[ADO_ENRICHMENT_FIELDS.confidenceOverall] = enrichment.confidence.overall;
+    customFields[ADO_ENRICHMENT_FIELDS.confidenceTitle] = String(enrichment.confidence.title);
+    customFields[ADO_ENRICHMENT_FIELDS.confidenceDescription] = String(enrichment.confidence.description);
+    customFields[ADO_ENRICHMENT_FIELDS.confidenceAcceptanceCriteria] = enrichment.confidence.acceptanceCriteria;
+    const rationale = toHtmlList(enrichment.confidence.rationale);
+    if (rationale) customFields[ADO_ENRICHMENT_FIELDS.confidenceRationale] = rationale;
+  }
+
+  if (enrichment.definitionOfDone?.length) {
+    customFields[ADO_ENRICHMENT_FIELDS.definitionOfDone] = enrichment.definitionOfDone.join("; ");
+  }
+
+  if (enrichment.dependencies) {
+    customFields[ADO_ENRICHMENT_FIELDS.dependenciesDependsOn] = toHtmlList(enrichment.dependencies.dependsOn) ?? "";
+    customFields[ADO_ENRICHMENT_FIELDS.dependenciesBlocks] = toHtmlList(enrichment.dependencies.blocks) ?? "";
+    customFields[ADO_ENRICHMENT_FIELDS.dependenciesConfidence] = enrichment.dependencies.confidence;
+    const dependencyRationale = toHtmlList(enrichment.dependencies.rationale);
+    if (dependencyRationale) customFields[ADO_ENRICHMENT_FIELDS.dependenciesRationale] = dependencyRationale;
+  }
+
+  if (enrichment.missingPieces?.issues?.length) {
+    customFields[ADO_ENRICHMENT_FIELDS.missingPiecesIssues] = toHtmlList(enrichment.missingPieces.issues) ?? "";
+  }
+
+  if (enrichment.consistencyIssues?.length) {
+    const formattedIssues = enrichment.consistencyIssues.map((issue) => {
+      const severity = issue.severity ?? "low";
+      const conflicts = issue.conflictsWith.length > 0 ? ` [${issue.conflictsWith.join(", ")}]` : "";
+      return `${severity.toUpperCase()}: ${issue.description}${conflicts}`;
+    });
+    customFields[ADO_ENRICHMENT_FIELDS.consistencyIssues] = toHtmlList(formattedIssues) ?? "";
+  }
+
+  if (enrichment.effort) {
+    customFields[ADO_ENRICHMENT_FIELDS.effortTShirtSize] = enrichment.effort.tshirtSize;
+    customFields[ADO_ENRICHMENT_FIELDS.effortConfidence] = enrichment.effort.confidence;
+    customFields[ADO_ENRICHMENT_FIELDS.effortReasoning] = escapeHtml(enrichment.effort.reasoning);
+  }
+
+  if (enrichment.qualityScore) {
+    customFields[ADO_ENRICHMENT_FIELDS.qualityScore] = enrichment.qualityScore.score;
+    customFields[ADO_ENRICHMENT_FIELDS.qualityClarity] = enrichment.qualityScore.breakdown.clarity;
+    customFields[ADO_ENRICHMENT_FIELDS.qualityCompleteness] = enrichment.qualityScore.breakdown.completeness;
+    customFields[ADO_ENRICHMENT_FIELDS.qualityTestability] = enrichment.qualityScore.breakdown.testability;
+    customFields[ADO_ENRICHMENT_FIELDS.qualityConsistency] = enrichment.qualityScore.breakdown.consistency;
+    const qualityIssues = toHtmlList(enrichment.qualityScore.issues);
+    const qualityRecommendations = toHtmlList(enrichment.qualityScore.recommendations);
+    if (qualityIssues) customFields[ADO_ENRICHMENT_FIELDS.qualityIssues] = qualityIssues;
+    if (qualityRecommendations) customFields[ADO_ENRICHMENT_FIELDS.qualityRecommendations] = qualityRecommendations;
+  }
+
+  return customFields;
+}
+
 function applyAdoEnrichment(
   description: string,
   acceptanceCriteria: string[],
   tags: string | undefined,
   enrichment: WorkItemEnrichment | undefined
-): { description: string; acceptanceCriteria: string[]; tags: string | undefined } {
+): {
+  description: string;
+  acceptanceCriteria: string[];
+  tags: string | undefined;
+  customFields?: Record<string, string | number | boolean>;
+} {
   if (!enrichment) {
-    return { description, acceptanceCriteria, tags };
+    return { description, acceptanceCriteria, tags, customFields: undefined };
   }
 
   const mergedCriteria = appendUnique(acceptanceCriteria, enrichment.definitionOfDone ?? []);
@@ -1795,6 +1889,7 @@ function applyAdoEnrichment(
     description: mergedDescription,
     acceptanceCriteria: mergedCriteria,
     tags: mergedTags.length > 0 ? mergedTags.join(";") : undefined,
+    customFields: buildAdoEnrichmentCustomFields(enrichment),
   };
 }
 
@@ -1955,6 +2050,7 @@ async function getOrCreateStory(
         iterationPath,
         areaPath,
         tags: enrichedPayload.tags,
+        customFields: enrichedPayload.customFields,
       });
     }
     logger.info("Reusing existing user story", { id: existingStory.id, title: storyTitle, parentFeatureId: featureId });
@@ -1972,6 +2068,7 @@ async function getOrCreateStory(
     iterationPath,
     areaPath,
     tags: enrichedPayload.tags,
+    customFields: enrichedPayload.customFields,
   });
   return { story, created: true };
 }
@@ -2147,6 +2244,7 @@ async function getOrCreateProcessStory(
         iterationPath,
         areaPath,
         tags: enrichedPayload.tags,
+        customFields: enrichedPayload.customFields,
       });
     }
     logger.info("Reusing existing process user story", { id: existingStory.id, title: storyTitle, parentFeatureId: featureId });
@@ -2164,6 +2262,7 @@ async function getOrCreateProcessStory(
     iterationPath,
     areaPath,
     tags: enrichedPayload.tags,
+    customFields: enrichedPayload.customFields,
   });
   return { story, created: true };
 }
