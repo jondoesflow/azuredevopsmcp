@@ -45,6 +45,13 @@ export interface WorkItemUpdate {
   tags?: string;
 }
 
+export interface WorkItemRelationInput {
+  project: string;
+  sourceWorkItemId: number;
+  targetWorkItemId: number;
+  relationType?: string;
+}
+
 export class AzureDevOpsClient {
   private readonly webApi: WebApi;
   private witApi: IWorkItemTrackingApi | null = null;
@@ -428,6 +435,43 @@ export class AzureDevOpsClient {
       });
     } catch (error) {
       logger.error("Failed to add acceptance criteria", error);
+      throw error;
+    }
+  }
+
+  async addRelation(input: WorkItemRelationInput): Promise<void> {
+    logger.info("Adding work item relation", {
+      project: input.project,
+      sourceWorkItemId: input.sourceWorkItemId,
+      targetWorkItemId: input.targetWorkItemId,
+      relationType: input.relationType,
+    });
+
+    try {
+      const witApi = await this.getWitApi();
+      const serverUrl = (this.webApi as unknown as { serverUrl: string }).serverUrl;
+      const relationType = input.relationType ?? "System.LinkTypes.Related";
+
+      const patchDocument: JsonPatchOperation[] = [
+        {
+          op: Operation.Add,
+          path: "/relations/-",
+          value: {
+            rel: relationType,
+            url: `${serverUrl}_apis/wit/workItems/${input.targetWorkItemId}`,
+          },
+        },
+      ];
+
+      await witApi.updateWorkItem(
+        null,
+        patchDocument,
+        input.sourceWorkItemId,
+        input.project,
+        false
+      );
+    } catch (error) {
+      logger.error("Failed to add work item relation", error);
       throw error;
     }
   }

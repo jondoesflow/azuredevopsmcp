@@ -4,7 +4,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { isInitializeRequest, ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { loadConfig } from "./config.js";
+import { Config, loadConfig } from "./config.js";
 import { logger } from "./logger.js";
 import { AzureDevOpsClient } from "./azureDevOpsClient.js";
 import { JiraClient } from "./jiraClient.js";
@@ -13,11 +13,62 @@ import { workItemTools, handleWorkItemTool, getFileStore } from "./tools/workIte
 const PORT = Number.parseInt(process.env.PORT || "80", 10);
 const TRANSPORT_MODE = process.env.TRANSPORT_MODE || "http"; // "http" or "stdio"
 const API_KEY = process.env.MCP_API_KEY || "";
+const CORS_ALLOWED_ORIGIN = process.env.CORS_ALLOWED_ORIGIN || "*";
 
 // Initialize config and Azure DevOps client
 const config = loadConfig();
 const azureDevOpsClient = config.azureDevOps ? new AzureDevOpsClient(config) : undefined;
 const jiraClient = config.jira ? new JiraClient(config.jira) : undefined;
+
+interface WorkItemClients {
+  azureDevOpsClient?: AzureDevOpsClient;
+  jiraClient?: JiraClient;
+}
+
+function normalizeHeaderValue(value: string | string[] | undefined): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function resolveClientsFromHeaders(req: Request): WorkItemClients {
+  const adoOrg = normalizeHeaderValue(req.headers["x-ado-org"] as string | string[] | undefined) ?? config.azureDevOps?.org;
+  const adoUrl = normalizeHeaderValue(req.headers["x-ado-url"] as string | string[] | undefined) ?? config.azureDevOps?.url;
+  const adoPat = normalizeHeaderValue(req.headers["x-ado-pat"] as string | string[] | undefined) ?? config.azureDevOps?.pat;
+
+  const jiraBaseUrl = normalizeHeaderValue(req.headers["x-jira-base-url"] as string | string[] | undefined) ?? config.jira?.baseUrl;
+  const jiraEmail = normalizeHeaderValue(req.headers["x-jira-email"] as string | string[] | undefined) ?? config.jira?.email;
+  const jiraApiToken = normalizeHeaderValue(req.headers["x-jira-api-token"] as string | string[] | undefined) ?? config.jira?.apiToken;
+  const jiraAuthTypeRaw = normalizeHeaderValue(req.headers["x-jira-auth-type"] as string | string[] | undefined) ?? config.jira?.authType;
+
+  const mergedConfig: Config = { enrichment: config.enrichment };
+  if (adoOrg && adoUrl && adoPat) {
+    mergedConfig.azureDevOps = {
+      org: adoOrg,
+      url: adoUrl,
+      pat: adoPat,
+    };
+  }
+
+  if (jiraBaseUrl && jiraEmail && jiraApiToken) {
+    const normalizedAuthType = jiraAuthTypeRaw?.toLowerCase() === "bearer" ? "bearer" : "basic";
+    mergedConfig.jira = {
+      baseUrl: jiraBaseUrl,
+      email: jiraEmail,
+      apiToken: jiraApiToken,
+      authType: normalizedAuthType,
+      apiVersion: config.jira?.apiVersion,
+      epicNameFieldId: config.jira?.epicNameFieldId,
+      epicLinkFieldId: config.jira?.epicLinkFieldId,
+      hierarchyLinkType: config.jira?.hierarchyLinkType,
+    };
+  }
+
+  return {
+    azureDevOpsClient: mergedConfig.azureDevOps ? new AzureDevOpsClient(mergedConfig) : undefined,
+    jiraClient: mergedConfig.jira ? new JiraClient(mergedConfig.jira) : undefined,
+  };
+}
 
 // API Key authentication middleware
 function apiKeyAuth(req: Request, res: Response, next: NextFunction): void {
@@ -43,7 +94,7 @@ function apiKeyAuth(req: Request, res: Response, next: NextFunction): void {
   res.status(401).json({ error: "Unauthorized - invalid or missing API key" });
 }
 
-function createMcpServer(): Server {
+function createMcpServer(clients: WorkItemClients): Server {
   const server = new Server(
     {
       name: "mcp-azure-devops-server",
@@ -94,7 +145,7 @@ function createMcpServer(): Server {
       logger.info("Tool call received", { tool: toolName, project: args.project });
 
       try {
-        const result = await handleWorkItemTool({ azureDevOpsClient, jiraClient }, toolName, args as never);
+        const result = await handleWorkItemTool(clients, toolName, args as never);
 
         return {
           content: [
@@ -171,12 +222,16 @@ function decodeUploadContent(raw: string, fileName: string): { content: string; 
 async function startHttpServer() {
   const app = express();
 
+  if (!API_KEY) {
+    logger.warn("MCP_API_KEY is not configured. HTTP endpoints are running without API key auth.");
+  }
+
   // Store active transports by session ID
   const transports: Record<string, StreamableHTTPServerTransport> = {};
 
   // CORS
   app.use((req, res, next) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Origin", CORS_ALLOWED_ORIGIN);
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, x-api-key, apikey, mcp-session-id");
     res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
@@ -220,6 +275,8 @@ async function startHttpServer() {
       if (!sessionId && isInitializeRequest(body)) {
         logger.info("New Streamable HTTP session initializing");
 
+        const clientsForSession = resolveClientsFromHeaders(req);
+
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (sid) => {
@@ -236,7 +293,7 @@ async function startHttpServer() {
           }
         };
 
-        const server = createMcpServer();
+        const server = createMcpServer(clientsForSession);
         await server.connect(transport);
         await transport.handleRequest(req, res, body);
         return;
@@ -368,7 +425,7 @@ async function startHttpServer() {
 
 // Stdio Transport for local CLI usage
 async function startStdioServer() {
-  const server = createMcpServer();
+  const server = createMcpServer({ azureDevOpsClient, jiraClient });
   const transport = new StdioServerTransport();
   logger.info("Connecting via stdio transport");
   await server.connect(transport);

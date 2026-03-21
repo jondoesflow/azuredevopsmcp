@@ -1,6 +1,13 @@
 import { AzureDevOpsClient } from "../azureDevOpsClient.js";
 import { logger } from "../logger.js";
 import { JiraClient } from "../jiraClient.js";
+import { enrichGeneratedWorkItems } from "./enrichment/orchestrator.js";
+import {
+  EnrichmentFlags,
+  EnrichmentWorkItem,
+  WorkItemDependencies,
+  WorkItemEnrichment,
+} from "./enrichment/types.js";
 
 // Strip HTML tags and decode entities to plain text
 function stripHtml(html: string | undefined | null): string {
@@ -15,6 +22,257 @@ function stripHtml(html: string | undefined | null): string {
     .replaceAll("&#39;", "'")
     .replaceAll(/\s+/g, " ")
     .trim();
+}
+
+async function persistAdoDependencies(
+  client: AzureDevOpsClient,
+  project: string,
+  preview: StoredPreview | undefined,
+  storyIdByPreviewId: Map<string, number>
+): Promise<number> {
+  if (!preview) return 0;
+
+  let linkCount = 0;
+  for (const item of preview.items) {
+    const sourceStoryId = storyIdByPreviewId.get(item.id);
+    if (!sourceStoryId) continue;
+
+    const dependency: WorkItemDependencies | undefined = item.enrichment?.dependencies;
+    if (!dependency) continue;
+
+    for (const depId of dependency.dependsOn) {
+      const targetStoryId = storyIdByPreviewId.get(depId);
+      if (!targetStoryId || targetStoryId === sourceStoryId) continue;
+      try {
+        await client.addRelation({
+          project,
+          sourceWorkItemId: sourceStoryId,
+          targetWorkItemId: targetStoryId,
+          relationType: "System.LinkTypes.Related",
+        });
+        linkCount++;
+      } catch (error) {
+        logger.warn("Unable to persist Azure DevOps dependency relation", {
+          sourceStoryId,
+          targetStoryId,
+          error: String(error),
+        });
+      }
+    }
+  }
+
+  return linkCount;
+}
+
+async function persistJiraDependencies(
+  jira: JiraClient,
+  preview: StoredPreview | undefined,
+  storyKeyByPreviewId: Map<string, string>
+): Promise<number> {
+  if (!preview) return 0;
+
+  let linkCount = 0;
+  for (const item of preview.items) {
+    const sourceKey = storyKeyByPreviewId.get(item.id);
+    if (!sourceKey) continue;
+    const dependency = item.enrichment?.dependencies;
+    if (!dependency) continue;
+
+    for (const depId of dependency.dependsOn) {
+      const targetKey = storyKeyByPreviewId.get(depId);
+      if (!targetKey || targetKey === sourceKey) continue;
+
+      try {
+        await jira.createIssueLink({
+          parentKey: targetKey,
+          childKey: sourceKey,
+          linkTypeName: "Blocks",
+        });
+        linkCount++;
+      } catch (error) {
+        logger.warn("Unable to persist Jira dependency relation", {
+          sourceKey,
+          targetKey,
+          error: String(error),
+        });
+      }
+    }
+  }
+
+  return linkCount;
+}
+
+function getPreviewStoreKey(fileName: string): string {
+  return `__preview_${fileName}`;
+}
+
+function findEnrichmentForTitle(preview: StoredPreview | undefined, title: string): WorkItemEnrichment | undefined {
+  if (!preview) return undefined;
+  const target = normaliseTitle(title);
+  return preview.items.find((item) => normaliseTitle(item.title) === target)?.enrichment;
+}
+
+function toPreviewItemId(analysisMode: AnalysisMode, primary: string, secondary: string): string {
+  return `${analysisMode}:${normaliseTitle(primary)}:${normaliseTitle(secondary)}`;
+}
+
+function buildThemePreviewItems(
+  analysisFileName: string,
+  sourceContent: string,
+  themes: Record<string, { mentions: number; subtopics: string[] }>,
+  extraAcceptanceCriteria: string[]
+): EnrichmentWorkItem[] {
+  const persona = detectPersonaFromTranscript(sourceContent);
+  const items: EnrichmentWorkItem[] = [];
+
+  for (const [themeName, themeData] of Object.entries(themes)) {
+    const uniqueSubtopics = Array.from(new Set(themeData.subtopics));
+    for (const subtopic of uniqueSubtopics) {
+      const title = `Implement ${subtopic}`;
+      const provenance: ProvenanceInfo = {
+        sourceFileName: analysisFileName,
+        sourceType: "transcript",
+        reference: `Theme: ${themeName}; Subtopic: ${subtopic}`,
+        excerpt: selectBestExcerpt(sourceContent, [subtopic, themeName]),
+      };
+      const description = buildStoryDescription(subtopic, themeName, persona, provenance);
+      const acceptanceCriteria = [...buildGherkinCriteria(subtopic, themeName, persona), ...extraAcceptanceCriteria];
+      items.push({
+        id: toPreviewItemId("themes", themeName, subtopic),
+        title,
+        description,
+        acceptanceCriteria,
+        sourceReferences: [buildProvenanceText(provenance)],
+      });
+    }
+  }
+
+  return items;
+}
+
+function buildProcessPreviewItems(
+  analysisFileName: string,
+  processContent: string,
+  evidenceContent: string,
+  processStages: ProcessStage[],
+  storyMaturity: StoryMaturity,
+  designReferences: string[],
+  extraAcceptanceCriteria: string[]
+): EnrichmentWorkItem[] {
+  const items: EnrichmentWorkItem[] = [];
+
+  for (const stage of processStages) {
+    const uniqueSteps = Array.from(new Map(stage.steps.map((step) => [normaliseTitle(step.title), step])).values());
+    for (const step of uniqueSteps) {
+      const persona = getBestPersona(step.role, evidenceContent);
+      const evidenceSnippets = selectEvidenceSnippets(evidenceContent, step.evidenceTerms);
+      const provenance: ProvenanceInfo = {
+        sourceFileName: analysisFileName,
+        sourceType: "process",
+        reference: `Stage: ${stage.title}; Step: ${step.title}`,
+        excerpt: selectBestExcerpt(processContent, [step.title, stage.title]),
+      };
+
+      const title = storyMaturity === "placeholder" ? `Discovery placeholder: ${step.title}` : `Implement ${step.title}`;
+      const description = storyMaturity === "placeholder"
+        ? buildPlaceholderStoryDescription(step, stage.title, persona, evidenceSnippets, designReferences, provenance)
+        : buildStoryDescription(step.title, stage.title, persona, provenance);
+      const acceptanceCriteria = storyMaturity === "placeholder"
+        ? [
+          "Given fit-gap analysis has not yet been completed",
+          "When the BA/FC reviews this placeholder with stakeholders",
+          "Then the requirement intent, constraints, and outcomes are clarified",
+          "And linked design references are identified before implementation starts",
+        ]
+        : [...buildGherkinCriteria(step.title, stage.title, persona), ...extraAcceptanceCriteria];
+
+      items.push({
+        id: toPreviewItemId("process", stage.title, step.title),
+        title,
+        description,
+        acceptanceCriteria,
+        tags: [storyMaturity === "placeholder" ? "FitGap-Unassessed" : "Ready-For-Detail"],
+        sourceReferences: [buildProvenanceText(provenance)],
+      });
+    }
+  }
+
+  return items;
+}
+
+function handlePreviewBacklog(input: ToolInput): string {
+  const backlogStore = getFileStore();
+  const analysisFileName = input.processFileName || input.fileName;
+  if (!analysisFileName) {
+    return JSON.stringify({ result: "error", message: "Provide processFileName (preferred) or fileName after analyse_document." });
+  }
+
+  const cachedAnalysis = backlogStore.get(`__analysis_${analysisFileName}`);
+  if (!cachedAnalysis) {
+    return JSON.stringify({ result: "error", message: "No analysis found. Call analyse_document first." });
+  }
+
+  const analysis = parseStoredAnalysis(cachedAnalysis.content);
+  const processContent = backlogStore.get(analysisFileName)?.content ?? "";
+  const evidenceFileName = input.evidenceFileName || input.fileName;
+  const evidenceContent = evidenceFileName ? backlogStore.get(evidenceFileName)?.content ?? "" : "";
+  const storyMaturity: StoryMaturity = input.storyMaturity === "detailed" ? "detailed" : "placeholder";
+  const designReferences = (input.designReferences ?? []).filter((item) => item.trim().length > 0);
+  const extraAcceptanceCriteria = buildRubricAcceptanceCriteria(analysis.rubrics);
+
+  const baseItems = analysis.analysisMode === "process"
+    ? buildProcessPreviewItems(
+      analysisFileName,
+      processContent,
+      evidenceContent,
+      analysis.processStages ?? [],
+      storyMaturity,
+      designReferences,
+      extraAcceptanceCriteria
+    )
+    : buildThemePreviewItems(
+      analysisFileName,
+      processContent,
+      analysis.themes ?? {},
+      extraAcceptanceCriteria
+    );
+
+  const enrichment = enrichGeneratedWorkItems(
+    {
+      transcriptContent: processContent,
+      analysisMode: analysis.analysisMode,
+    },
+    baseItems,
+    getEnrichmentFlags()
+  );
+
+  const preview: StoredPreview = {
+    fileName: analysisFileName,
+    analysisMode: analysis.analysisMode,
+    storyMaturity,
+    items: enrichment.items,
+    warnings: enrichment.warnings,
+    idempotencyKey: enrichment.idempotencyKey,
+    createdAt: new Date().toISOString(),
+  };
+
+  backlogStore.set(getPreviewStoreKey(analysisFileName), {
+    name: getPreviewStoreKey(analysisFileName),
+    content: JSON.stringify(preview),
+    mimeType: "application/json",
+    uploadedAt: new Date(),
+  });
+
+  return JSON.stringify({
+    result: "success",
+    fileName: analysisFileName,
+    analysisMode: analysis.analysisMode,
+    storyMaturity,
+    storyCount: preview.items.length,
+    warnings: preview.warnings,
+    idempotencyKey: preview.idempotencyKey,
+    items: preview.items,
+  });
 }
 
 function jiraDescriptionToText(raw: unknown): string {
@@ -74,6 +332,39 @@ interface StoredAnalysis {
   themes?: Record<string, { mentions: number; subtopics: string[] }>;
   processStages?: ProcessStage[];
   rubrics?: RubricAssessment[];
+}
+
+interface StoredPreview {
+  fileName: string;
+  analysisMode: AnalysisMode;
+  storyMaturity: StoryMaturity;
+  items: EnrichmentWorkItem[];
+  warnings: string[];
+  idempotencyKey: string;
+  createdAt: string;
+}
+
+function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  const normalised = value.trim().toLowerCase();
+  if (normalised === "1" || normalised === "true" || normalised === "yes" || normalised === "on") return true;
+  if (normalised === "0" || normalised === "false" || normalised === "no" || normalised === "off") return false;
+  return fallback;
+}
+
+function getEnrichmentFlags(): EnrichmentFlags {
+  const enabled = parseBooleanEnv(process.env.ENRICHMENT_ENABLED, false);
+  return {
+    enabled,
+    dependencies: parseBooleanEnv(process.env.ENRICH_DEPENDENCIES_ENABLED, enabled),
+    definitionOfDone: parseBooleanEnv(process.env.ENRICH_DOD_ENABLED, enabled),
+    confidence: parseBooleanEnv(process.env.ENRICH_CONFIDENCE_ENABLED, enabled),
+    missingPieces: parseBooleanEnv(process.env.ENRICH_MISSING_PIECES_ENABLED, enabled),
+    consistency: parseBooleanEnv(process.env.ENRICH_CONSISTENCY_ENABLED, enabled),
+    effort: parseBooleanEnv(process.env.ENRICH_EFFORT_ENABLED, enabled),
+    quality: parseBooleanEnv(process.env.ENRICH_QUALITY_ENABLED, enabled),
+    aiAssist: parseBooleanEnv(process.env.ENRICH_AI_ASSIST_ENABLED, false),
+  };
 }
 
 // Truncate text to avoid large payloads triggering content filters
@@ -719,6 +1010,32 @@ export const workItemTools: Tool[] = [
     },
   },
   {
+    name: "preview_backlog",
+    description: "Builds backlog stories from a previously analysed document, applies optional enrichment, and returns review data without creating ADO/Jira work items.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        fileName: {
+          type: "string",
+          description: "Legacy analysed file name. Backward compatible alias when processFileName is not provided.",
+        },
+        processFileName: {
+          type: "string",
+          description: "Primary analysed process-document file name.",
+        },
+        evidenceFileName: {
+          type: "string",
+          description: "Optional supporting transcript/notes file used for persona/provenance snippets.",
+        },
+        storyMaturity: {
+          type: "string",
+          description: "Optional story maturity mode: 'placeholder' or 'detailed'.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: "create_backlog",
     description: "Creates a backlog from a previously analysed document. Supports process-first placeholder discovery backlogs and legacy transcript/theme backlog generation.",
     inputSchema: {
@@ -840,6 +1157,8 @@ interface ToolInput {
   chunkIndex?: number;
   includeContent?: boolean;
   includePreview?: boolean;
+  previewFileName?: string;
+  reviewOnly?: boolean;
 }
 
 interface WorkItemClients {
@@ -1391,6 +1710,133 @@ function buildGherkinCriteria(subtopic: string, themeName: string, persona: stri
   ];
 }
 
+function appendUnique(list: string[], values: string[]): string[] {
+  return Array.from(new Set([...list, ...values.map((value) => value.trim()).filter(Boolean)]));
+}
+
+function toEnrichmentLabelToken(value: string): string {
+  return value.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/(^-|-$)/g, "");
+}
+
+function buildEnrichmentSummaryText(enrichment: WorkItemEnrichment | undefined): string {
+  if (!enrichment) return "";
+
+  const lines: string[] = ["", "Enrichment Summary:"];
+
+  if (enrichment.confidence) {
+    lines.push(`- Confidence: overall ${enrichment.confidence.overall}/100 (title ${enrichment.confidence.title}, description ${enrichment.confidence.description}, AC ${enrichment.confidence.acceptanceCriteria})`);
+  }
+
+  if (enrichment.effort) {
+    lines.push(`- Effort: ${enrichment.effort.tshirtSize} (confidence ${enrichment.effort.confidence}/100)`);
+    lines.push(`- Effort reasoning: ${enrichment.effort.reasoning}`);
+  }
+
+  if (enrichment.qualityScore) {
+    lines.push(`- Quality score: ${enrichment.qualityScore.score}/100`);
+    lines.push(`- Quality breakdown: clarity ${enrichment.qualityScore.breakdown.clarity}, completeness ${enrichment.qualityScore.breakdown.completeness}, testability ${enrichment.qualityScore.breakdown.testability}, consistency ${enrichment.qualityScore.breakdown.consistency}`);
+  }
+
+  if (enrichment.missingPieces?.issues?.length) {
+    lines.push("- Missing pieces:");
+    for (const issue of enrichment.missingPieces.issues) {
+      lines.push(`  - ${issue}`);
+    }
+  }
+
+  if (enrichment.consistencyIssues?.length) {
+    lines.push("- Consistency issues:");
+    for (const issue of enrichment.consistencyIssues) {
+      lines.push(`  - (${issue.severity ?? "low"}) ${issue.description} [${issue.conflictsWith.join(", ")}]`);
+    }
+  }
+
+  if (enrichment.dependencies) {
+    const dependsOn = enrichment.dependencies.dependsOn.length > 0 ? enrichment.dependencies.dependsOn.join(", ") : "none";
+    const blocks = enrichment.dependencies.blocks.length > 0 ? enrichment.dependencies.blocks.join(", ") : "none";
+    lines.push(`- Dependencies: dependsOn=${dependsOn}; blocks=${blocks}; confidence=${enrichment.dependencies.confidence}/100`);
+  }
+
+  return lines.join("\n");
+}
+
+function buildEnrichmentSummaryHtml(enrichment: WorkItemEnrichment | undefined): string {
+  if (!enrichment) return "";
+  const escaped = escapeHtml(buildEnrichmentSummaryText(enrichment)).replaceAll("\n", "<br/>");
+  return `<br/><br/><strong>Enrichment Summary</strong><br/>${escaped}`;
+}
+
+function applyAdoEnrichment(
+  description: string,
+  acceptanceCriteria: string[],
+  tags: string | undefined,
+  enrichment: WorkItemEnrichment | undefined
+): { description: string; acceptanceCriteria: string[]; tags: string | undefined } {
+  if (!enrichment) {
+    return { description, acceptanceCriteria, tags };
+  }
+
+  const mergedCriteria = appendUnique(acceptanceCriteria, enrichment.definitionOfDone ?? []);
+  const summary = buildEnrichmentSummaryHtml(enrichment);
+  const mergedDescription = summary ? `${description}${summary}` : description;
+
+  const currentTags = (tags ?? "")
+    .split(";")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const enrichmentTags = [
+    enrichment.effort ? `effort:${enrichment.effort.tshirtSize}` : undefined,
+    enrichment.qualityScore ? `quality:${enrichment.qualityScore.score >= 80 ? "high" : enrichment.qualityScore.score >= 60 ? "medium" : "low"}` : undefined,
+    enrichment.confidence ? `confidence:${enrichment.confidence.overall}` : undefined,
+  ].filter((item): item is string => Boolean(item));
+
+  const mergedTags = appendUnique(currentTags, enrichmentTags);
+  return {
+    description: mergedDescription,
+    acceptanceCriteria: mergedCriteria,
+    tags: mergedTags.length > 0 ? mergedTags.join(";") : undefined,
+  };
+}
+
+function applyJiraEnrichment(
+  description: string,
+  acceptanceCriteria: string[],
+  labels: string[] | undefined,
+  enrichment: WorkItemEnrichment | undefined
+): { description: string; acceptanceCriteria: string[]; labels: string[] } {
+  if (!enrichment) {
+    return { description, acceptanceCriteria, labels: labels ?? [] };
+  }
+
+  const mergedCriteria = appendUnique(acceptanceCriteria, enrichment.definitionOfDone ?? []);
+  const mergedDescription = `${description}${buildEnrichmentSummaryText(enrichment)}`;
+
+  const baseLabels = labels ?? [];
+  const enrichmentLabels = [
+    enrichment.effort ? `effort-${toEnrichmentLabelToken(enrichment.effort.tshirtSize)}` : undefined,
+    enrichment.qualityScore ? `quality-${enrichment.qualityScore.score >= 80 ? "high" : enrichment.qualityScore.score >= 60 ? "medium" : "low"}` : undefined,
+    enrichment.consistencyIssues && enrichment.consistencyIssues.length > 0 ? "consistency-check" : undefined,
+  ].filter((item): item is string => Boolean(item));
+
+  return {
+    description: mergedDescription,
+    acceptanceCriteria: mergedCriteria,
+    labels: appendUnique(baseLabels, enrichmentLabels),
+  };
+}
+
+function parseStoredPreview(rawContent: string): StoredPreview | undefined {
+  try {
+    const parsed = JSON.parse(rawContent) as StoredPreview;
+    if (parsed && Array.isArray(parsed.items) && typeof parsed.fileName === "string") {
+      return parsed;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function getOrCreateEpic(
   client: AzureDevOpsClient,
   existingEpics: Array<{ id?: number; fields?: { [key: string]: unknown } }>,
@@ -1476,7 +1922,8 @@ async function getOrCreateStory(
   persona: string,
   sourceFileName: string,
   sourceContent: string,
-  extraAcceptanceCriteria: string[]
+  extraAcceptanceCriteria: string[],
+  enrichment?: WorkItemEnrichment
 ): Promise<{ story: { id?: number; fields?: { [key: string]: unknown } }; created: boolean }> {
   const storyTitle = `Implement ${subtopic}`;
   const existingStories = await client.listWorkItems({ project, witType: "User Story", parentId: featureId, top: 1000 });
@@ -1489,17 +1936,25 @@ async function getOrCreateStory(
     excerpt: selectBestExcerpt(sourceContent, [subtopic, themeName]),
   };
 
+  const enrichedPayload = applyAdoEnrichment(
+    buildStoryDescription(subtopic, themeName, persona, provenance),
+    [...buildGherkinCriteria(subtopic, themeName, persona), ...extraAcceptanceCriteria],
+    undefined,
+    enrichment
+  );
+
   if (existingStory) {
     if (existingStory.id) {
       await client.updateWorkItem({
         project,
         workItemId: existingStory.id,
         title: storyTitle,
-        description: buildStoryDescription(subtopic, themeName, persona, provenance),
-        acceptanceCriteria: [...buildGherkinCriteria(subtopic, themeName, persona), ...extraAcceptanceCriteria],
+        description: enrichedPayload.description,
+        acceptanceCriteria: enrichedPayload.acceptanceCriteria,
         moscow: "Must",
         iterationPath,
         areaPath,
+        tags: enrichedPayload.tags,
       });
     }
     logger.info("Reusing existing user story", { id: existingStory.id, title: storyTitle, parentFeatureId: featureId });
@@ -1510,12 +1965,13 @@ async function getOrCreateStory(
     project,
     witType: "User Story",
     title: storyTitle,
-    description: buildStoryDescription(subtopic, themeName, persona, provenance),
+    description: enrichedPayload.description,
     parentId: featureId,
-    acceptanceCriteria: [...buildGherkinCriteria(subtopic, themeName, persona), ...extraAcceptanceCriteria],
+    acceptanceCriteria: enrichedPayload.acceptanceCriteria,
     moscow: "Must",
     iterationPath,
     areaPath,
+    tags: enrichedPayload.tags,
   });
   return { story, created: true };
 }
@@ -1644,7 +2100,8 @@ async function getOrCreateProcessStory(
   evidenceContent: string,
   storyMaturity: StoryMaturity,
   designReferences: string[],
-  extraAcceptanceCriteria: string[]
+  extraAcceptanceCriteria: string[],
+  enrichment?: WorkItemEnrichment
 ): Promise<{ story: { id?: number; fields?: { [key: string]: unknown } }; created: boolean }> {
   const storyTitle = storyMaturity === "placeholder" ? `Discovery placeholder: ${step.title}` : `Implement ${step.title}`;
   const existingStories = await client.listWorkItems({ project, witType: "User Story", parentId: featureId, top: 1000 });
@@ -1676,18 +2133,20 @@ async function getOrCreateProcessStory(
     ? "Discovery;Process-First;FitGap-Unassessed"
     : "Discovery;Process-First;Ready-For-Detail";
 
+  const enrichedPayload = applyAdoEnrichment(description, acceptanceCriteria, tags, enrichment);
+
   if (existingStory) {
     if (existingStory.id) {
       await client.updateWorkItem({
         project,
         workItemId: existingStory.id,
         title: storyTitle,
-        description,
-        acceptanceCriteria,
+        description: enrichedPayload.description,
+        acceptanceCriteria: enrichedPayload.acceptanceCriteria,
         moscow: "Must",
         iterationPath,
         areaPath,
-        tags,
+        tags: enrichedPayload.tags,
       });
     }
     logger.info("Reusing existing process user story", { id: existingStory.id, title: storyTitle, parentFeatureId: featureId });
@@ -1698,13 +2157,13 @@ async function getOrCreateProcessStory(
     project,
     witType: "User Story",
     title: storyTitle,
-    description,
+    description: enrichedPayload.description,
     parentId: featureId,
-    acceptanceCriteria,
+    acceptanceCriteria: enrichedPayload.acceptanceCriteria,
     moscow: "Must",
     iterationPath,
     areaPath,
-    tags,
+    tags: enrichedPayload.tags,
   });
   return { story, created: true };
 }
@@ -1716,6 +2175,11 @@ async function handleCreateBacklogFromProcess(
   analysisFileName: string
 ): Promise<string> {
   const backlogStore = getFileStore();
+  let preview = parseStoredPreview(backlogStore.get(getPreviewStoreKey(analysisFileName))?.content ?? "");
+  if (!preview) {
+    handlePreviewBacklog(input);
+    preview = parseStoredPreview(backlogStore.get(getPreviewStoreKey(analysisFileName))?.content ?? "");
+  }
   const processContent = backlogStore.get(analysisFileName)?.content ?? "";
   const processStages = analysis.processStages ?? [];
   if (processStages.length === 0) {
@@ -1735,6 +2199,7 @@ async function handleCreateBacklogFromProcess(
   let featureCount = 0;
   let storyCount = 0;
   let taskCount = 0;
+  const storyIdByPreviewId = new Map<string, number>();
 
   logger.info("Creating process-first backlog", {
     project,
@@ -1806,11 +2271,17 @@ async function handleCreateBacklogFromProcess(
         evidenceContent,
         storyMaturity,
         designReferences,
-        extraAcceptanceCriteria
+        extraAcceptanceCriteria,
+        findEnrichmentForTitle(preview, storyMaturity === "placeholder" ? `Discovery placeholder: ${step.title}` : `Implement ${step.title}`)
       );
 
       if (storyCreated) {
         storyCount++;
+      }
+
+      const previewItemId = preview?.items.find((item) => normaliseTitle(item.title) === normaliseTitle(storyMaturity === "placeholder" ? `Discovery placeholder: ${step.title}` : `Implement ${step.title}`))?.id;
+      if (previewItemId && story.id) {
+        storyIdByPreviewId.set(previewItemId, story.id);
       }
 
       const processTaskTitles = storyMaturity === "placeholder"
@@ -1829,6 +2300,8 @@ async function handleCreateBacklogFromProcess(
     }
   }
 
+  const dependencyLinks = await persistAdoDependencies(client, project, preview, storyIdByPreviewId);
+
   logger.info("Process-first backlog creation complete", { epicCount, featureCount, storyCount, taskCount, storyMaturity });
   return JSON.stringify({
     result: "success",
@@ -1838,6 +2311,7 @@ async function handleCreateBacklogFromProcess(
     features: featureCount,
     userStories: storyCount,
     tasks: taskCount,
+    dependencyLinks,
   });
 }
 
@@ -1857,6 +2331,11 @@ async function handleCreateBacklogJira(jira: JiraClient, input: ToolInput): Prom
   }
 
   const storedAnalysis = parseStoredAnalysis(backlogCached.content);
+  let preview = parseStoredPreview(backlogStore.get(getPreviewStoreKey(analysisFileName))?.content ?? "");
+  if (!preview) {
+    handlePreviewBacklog(input);
+    preview = parseStoredPreview(backlogStore.get(getPreviewStoreKey(analysisFileName))?.content ?? "");
+  }
   const projectKey = input.project;
 
   if (storedAnalysis.analysisMode === "process") {
@@ -1870,6 +2349,7 @@ async function handleCreateBacklogJira(jira: JiraClient, input: ToolInput): Prom
 
   let epicCount = 0;
   let storyCount = 0;
+  const storyKeyByPreviewId = new Map<string, string>();
 
   for (const [themeName, themeData] of Object.entries(themes)) {
     const epicSummary = themeName;
@@ -1909,17 +2389,30 @@ async function handleCreateBacklogJira(jira: JiraClient, input: ToolInput): Prom
         buildProvenanceText(provenance),
       ].join("\n");
 
-      await jira.createIssue({
+      const enrichedPayload = applyJiraEnrichment(
+        description,
+        [...buildGherkinCriteria(subtopic, themeName, persona), ...extraAcceptanceCriteria],
+        ["mcp", "backlog", "themes"],
+        findEnrichmentForTitle(preview, storySummary)
+      );
+
+      const createdStory = await jira.createIssue({
         projectKey,
         issueType: "Story",
         summary: storySummary,
-        description,
+        description: enrichedPayload.description,
         epicKey: epic.key,
-        labels: ["mcp", "backlog", "themes"],
+        labels: enrichedPayload.labels,
       });
+      const previewItemId = preview?.items.find((item) => normaliseTitle(item.title) === normaliseTitle(storySummary))?.id;
+      if (previewItemId) {
+        storyKeyByPreviewId.set(previewItemId, createdStory.key);
+      }
       storyCount++;
     }
   }
+
+  const dependencyLinks = await persistJiraDependencies(jira, preview, storyKeyByPreviewId);
 
   return JSON.stringify({
     result: "success",
@@ -1927,6 +2420,7 @@ async function handleCreateBacklogJira(jira: JiraClient, input: ToolInput): Prom
     analysisMode: "themes",
     epics: epicCount,
     userStories: storyCount,
+    dependencyLinks,
   });
 }
 
@@ -1938,6 +2432,11 @@ async function handleCreateBacklogFromProcessJira(
   projectKey: string
 ): Promise<string> {
   const backlogStore = getFileStore();
+  let preview = parseStoredPreview(backlogStore.get(getPreviewStoreKey(analysisFileName))?.content ?? "");
+  if (!preview) {
+    handlePreviewBacklog(input);
+    preview = parseStoredPreview(backlogStore.get(getPreviewStoreKey(analysisFileName))?.content ?? "");
+  }
   const processStages = analysis.processStages ?? [];
   const processContent = backlogStore.get(analysisFileName)?.content ?? "";
   if (processStages.length === 0) {
@@ -1952,6 +2451,7 @@ async function handleCreateBacklogFromProcessJira(
 
   let epicCount = 0;
   let storyCount = 0;
+  const storyKeyByPreviewId = new Map<string, string>();
 
   for (const stage of processStages) {
     const epicSummary = stage.title;
@@ -2012,17 +2512,39 @@ async function handleCreateBacklogFromProcessJira(
           buildProvenanceText(provenance),
         ].join("\n");
 
-      await jira.createIssue({
+      const acceptanceCriteriaForEnrichment = storyMaturity === "placeholder"
+        ? [
+          "Given fit-gap analysis has not yet been completed",
+          "When the BA/FC reviews this placeholder with stakeholders",
+          "Then the requirement intent, constraints, and outcomes are clarified",
+          "And linked design references are identified before implementation starts",
+        ]
+        : [...buildGherkinCriteria(step.title, stage.title, persona), ...extraAcceptanceCriteria];
+
+      const enrichedPayload = applyJiraEnrichment(
+        description,
+        acceptanceCriteriaForEnrichment,
+        ["mcp", "backlog", "process"],
+        findEnrichmentForTitle(preview, storySummary)
+      );
+
+      const createdStory = await jira.createIssue({
         projectKey,
         issueType: "Story",
         summary: storySummary,
-        description,
+        description: enrichedPayload.description,
         epicKey: epic.key,
-        labels: ["mcp", "backlog", "process"],
+        labels: enrichedPayload.labels,
       });
+      const previewItemId = preview?.items.find((item) => normaliseTitle(item.title) === normaliseTitle(storySummary))?.id;
+      if (previewItemId) {
+        storyKeyByPreviewId.set(previewItemId, createdStory.key);
+      }
       storyCount++;
     }
   }
+
+  const dependencyLinks = await persistJiraDependencies(jira, preview, storyKeyByPreviewId);
 
   return JSON.stringify({
     result: "success",
@@ -2031,6 +2553,7 @@ async function handleCreateBacklogFromProcessJira(
     storyMaturity,
     epics: epicCount,
     userStories: storyCount,
+    dependencyLinks,
   });
 }
 
@@ -2050,6 +2573,11 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
   }
   const uploadedFile = backlogStore.get(input.fileName || analysisFileName);
   const storedAnalysis = parseStoredAnalysis(backlogCached.content);
+  let preview = parseStoredPreview(backlogStore.get(getPreviewStoreKey(analysisFileName))?.content ?? "");
+  if (!preview) {
+    handlePreviewBacklog(input);
+    preview = parseStoredPreview(backlogStore.get(getPreviewStoreKey(analysisFileName))?.content ?? "");
+  }
 
   if (storedAnalysis.analysisMode === "process") {
     return handleCreateBacklogFromProcess(client, input, storedAnalysis, analysisFileName);
@@ -2066,6 +2594,7 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
   let featureCount = 0;
   let storyCount = 0;
   let taskCount = 0;
+  const storyIdByPreviewId = new Map<string, number>();
 
   logger.info("Creating full backlog", { project, themes: Object.keys(backlogThemes).length, persona, iterationPath });
 
@@ -2110,20 +2639,27 @@ async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput):
         themeName,
         persona,
         analysisFileName,
-        uploadedFile?.content ?? ""
-        ,
-        extraAcceptanceCriteria
+        uploadedFile?.content ?? "",
+        extraAcceptanceCriteria,
+        findEnrichmentForTitle(preview, `Implement ${subtopic}`)
       );
       if (storyCreated) {
         storyCount++;
+      }
+
+      const previewItemId = preview?.items.find((item) => normaliseTitle(item.title) === normaliseTitle(`Implement ${subtopic}`))?.id;
+      if (previewItemId && story.id) {
+        storyIdByPreviewId.set(previewItemId, story.id);
       }
 
       taskCount += await createMissingTasks(client, project, iterationPath, areaPath, story.id!, subtopic);
     }
   }
 
-  logger.info("Backlog creation complete", { epicCount, featureCount, storyCount, taskCount });
-  return JSON.stringify({ result: "success", epics: epicCount, features: featureCount, userStories: storyCount, tasks: taskCount });
+  const dependencyLinks = await persistAdoDependencies(client, project, preview, storyIdByPreviewId);
+
+  logger.info("Backlog creation complete", { epicCount, featureCount, storyCount, taskCount, dependencyLinks });
+  return JSON.stringify({ result: "success", epics: epicCount, features: featureCount, userStories: storyCount, tasks: taskCount, dependencyLinks });
 }
 
 export async function handleWorkItemTool(
@@ -2588,6 +3124,9 @@ export async function handleWorkItemTool(
 
       case "get_theme_details":
         return handleGetThemeDetails(input);
+
+      case "preview_backlog":
+        return handlePreviewBacklog(input);
 
       case "create_backlog":
         if (targetSystem === "jira") {

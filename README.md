@@ -19,6 +19,7 @@ A Model Context Protocol (MCP) server that integrates with Azure DevOps to manag
 |-------|-------------|
 | [SETUP-GUIDE.md](mcp-server/SETUP-GUIDE.md) | **Start here** — Complete end-to-end setup from scratch |
 | [AZURE-DEPLOYMENT.md](mcp-server/AZURE-DEPLOYMENT.md) | Azure infrastructure deployment reference |
+| [webapp/README.md](webapp/README.md) | Internal SPA + BFF channel to externalize the Copilot workflow |
 | [changelog.md](changelog.md) | High-level running log of MCP server and deployment changes |
 
 ## Quick Start (Local Development)
@@ -42,6 +43,15 @@ See [SETUP-GUIDE.md](mcp-server/SETUP-GUIDE.md) for the full walkthrough, or [AZ
 3. Deploy to Azure Container Instances (port 80, public DNS)
 4. Connect Copilot Studio MCP connector to `http://<your-dns>.azurecontainer.io/mcp`
 5. Create Copilot Studio Topic + Power Automate flow for file uploads
+
+## Internal Web App Channel (SPA + BFF)
+
+For internal users who cannot use Teams as the primary channel, this repository now includes a web interface under `webapp/`:
+
+- `webapp/frontend` — React SPA with Entra ID sign-in
+- `webapp/bff` — secured proxy API that calls MCP `/sse`, `/upload`, and `/files`
+
+This keeps `MCP_API_KEY` server-side in the BFF and allows browser clients to authenticate with Entra tokens.
 
 ## Available Tools (19)
 
@@ -121,6 +131,10 @@ mcp-server/
   SETUP-GUIDE.md          # Complete end-to-end setup guide
   AZURE-DEPLOYMENT.md     # Azure infrastructure deployment reference
   ../changelog.md          # High-level running change log
+
+webapp/
+  frontend/                # React SPA (MSAL auth, chat + file upload UI)
+  bff/                     # Express BFF (auth middleware + MCP proxy)
 ```
 
 ## License
