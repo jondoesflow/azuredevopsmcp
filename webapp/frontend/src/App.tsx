@@ -1019,10 +1019,17 @@ export function App() {
             </div>
             {selectedPlatform ? renderConnectionFields() : null}
             <div className="setup-actions">
-              <button onClick={() => void saveConnectionDetails()}>Save</button>
+              <button disabled={validatingConnection} onClick={() => void saveConnectionDetails()}>Save</button>
+              <button disabled={validatingConnection} onClick={async () => {
+                await validateConnection(false);
+                setShowConfigModal(false);
+              }}>
+                {validatingConnection ? "Validating..." : "Save & Validate"}
+              </button>
               <button onClick={() => setShowConfigModal(false)}>Close</button>
             </div>
             {renderInlineSpinner("save-connection", "Saving connection details...")}
+            {renderInlineSpinner("validate-connection", "Validating connection...")}
           </div>
         </div>
       ) : null}

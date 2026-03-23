@@ -418,6 +418,25 @@ export function createApiRouter(config: AppConfig) {
         return;
       }
 
+      // For Azure DevOps, ensure the enrichment process exists before creating backlog items
+      let enrichmentResult: EnrichmentCheckResult | undefined;
+      if (setupState.platform === "azure-devops") {
+        const targetUrl = getAzureDevOpsUrl(setupState.azureDevOpsOrg, setupState.azureDevOpsUrl);
+        if (targetUrl && secrets.azureDevOpsPat) {
+          enrichmentResult = await checkAndMigrateEnrichmentProcess({
+            targetOrgUrl: targetUrl,
+            targetPat: secrets.azureDevOpsPat,
+            sourceOrgUrl: setupState.sourceAdoOrgUrl,
+            sourceProject: setupState.sourceAdoProject,
+            sourceProcessName: setupState.sourceAdoProcessName,
+            sourcePat: secrets.sourceAdoPat,
+            mcpBaseUrl: config.mcpBaseUrl,
+            mcpApiKey: config.mcpApiKey,
+          });
+          setupStore.setEnrichmentStatus(userId, enrichmentResult.status);
+        }
+      }
+
       const [analysis, review, backlog] = await mcpClient.executeToolsSequential([
         { toolName: "analyse_document", args: { fileName, analysisMode: processRequest.analysisMode } },
         { toolName: "preview_backlog", args: { processFileName: fileName, fileName, storyMaturity: "placeholder" } },
@@ -438,6 +457,7 @@ export function createApiRouter(config: AppConfig) {
           review,
           analysis,
           backlog,
+          ...(enrichmentResult ? { enrichmentProcess: enrichmentResult } : {}),
         },
       });
     } catch (error) {
