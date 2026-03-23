@@ -105,6 +105,35 @@ User uploads document in Copilot Studio
   - User Story = detailed implementation story with MoSCoW + Gherkin acceptance criteria
   - Tasks = analyse/design-test trio
 
+## Pre-Flight Process Migration
+
+When configured, the server runs a **pre-flight check at startup** to ensure the target Azure DevOps organization has the custom Enrichment process installed. If the process is missing, it is automatically migrated from a source organization.
+
+### How it works
+
+1. **Check** — The server lists all processes in the target org and inspects their work item type fields for any field containing "Enrichment" in the reference name.
+2. **Migrate** (only if check fails) — The server reads the full process definition from the source org (work item types, custom fields, states, rules, layout) and recreates it in the target org.
+3. **Continue** — Once the process is confirmed or migrated, the MCP server starts normally. If migration fails, the server exits with a clear error.
+
+### Required environment variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `SOURCE_ADO_ORG_URL` | Yes* | Source org URL, e.g. `https://dev.azure.com/source-org` |
+| `SOURCE_ADO_PROJECT` | Yes* | Project name in the source org |
+| `SOURCE_ADO_PROCESS_NAME` | Yes* | Name of the custom process to migrate (e.g. `CustomAgile`) |
+| `SOURCE_ADO_PAT` | Yes* | PAT for the source org (needs **Process → Read** scope) |
+| `TARGET_ADO_ORG_URL` | No | Defaults to `AZURE_DEVOPS_URL` |
+| `TARGET_ADO_PROJECT` | No | Defaults to `AZURE_DEVOPS_ORG` |
+| `TARGET_ADO_PAT` | No | Defaults to `AZURE_DEVOPS_PAT` (needs **Process → Read & Write** scope) |
+
+*\*Required only when process migration is enabled. Set `SOURCE_ADO_ORG_URL` to activate.*
+
+### PAT scope requirements
+
+- **Source org PAT**: Work Items (Read), Process (Read)
+- **Target org PAT**: Work Items (Read & Write), Process (Read & Write)
+
 ## Environment Variables
 
 | Variable | Required | Description |
@@ -125,6 +154,7 @@ mcp-server/
     config.ts             # Environment variable loading
     logger.ts             # Structured logging
     azureDevOpsClient.ts  # Azure DevOps REST API client
+    processMigration.ts   # Pre-flight Enrichment process check & migration
     tools/
       workItems.ts        # 19 MCP tool definitions and handlers
   Dockerfile              # Multi-stage Docker build
