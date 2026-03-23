@@ -56,7 +56,7 @@ export interface SetupConnectionState {
   sourceAdoProject?: string;
   sourceAdoProcessName?: string;
   hasSourceAdoPat: boolean;
-  enrichmentProcessStatus?: "found" | "migrated" | "not_checked" | "migration_failed";
+  enrichmentProcessStatus?: "found" | "migrated" | "not_checked" | "migration_failed" | "assigned" | "migrated_and_assigned";
 }
 
 export type ChatIntent =

@@ -63,7 +63,7 @@ interface ConnectionDefaults {
   sourceAdoProject?: string;
   sourceAdoProcessName?: string;
   sourceAdoPat?: string;
-  enrichmentProcessStatus?: "found" | "migrated" | "not_checked" | "migration_failed";
+  enrichmentProcessStatus?: "found" | "migrated" | "not_checked" | "migration_failed" | "assigned" | "migrated_and_assigned";
 }
 
 interface StoredUserConfig extends ConnectionDefaults {
@@ -300,7 +300,7 @@ export class SetupStore {
     return this.getState(userId);
   }
 
-  setEnrichmentStatus(userId: string | undefined, status: "found" | "migrated" | "not_checked" | "migration_failed"): void {
+  setEnrichmentStatus(userId: string | undefined, status: "found" | "migrated" | "not_checked" | "migration_failed" | "assigned" | "migrated_and_assigned"): void {
     if (userId) {
       const existing = readPerUser();
       const current = existing[userId] ?? { ...this.resolveForUser(userId), updatedAt: new Date().toISOString() };

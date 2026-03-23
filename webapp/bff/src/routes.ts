@@ -261,6 +261,7 @@ export function createApiRouter(config: AppConfig) {
         // Check and optionally migrate the enrichment process
         enrichmentResult = await checkAndMigrateEnrichmentProcess({
           targetOrgUrl: url,
+          targetProject: state.azureDevOpsProject ?? "",
           targetPat: secrets.azureDevOpsPat,
           sourceOrgUrl: state.sourceAdoOrgUrl,
           sourceProject: state.sourceAdoProject,
@@ -425,6 +426,7 @@ export function createApiRouter(config: AppConfig) {
         if (targetUrl && secrets.azureDevOpsPat) {
           enrichmentResult = await checkAndMigrateEnrichmentProcess({
             targetOrgUrl: targetUrl,
+            targetProject: effectiveProject,
             targetPat: secrets.azureDevOpsPat,
             sourceOrgUrl: setupState.sourceAdoOrgUrl,
             sourceProject: setupState.sourceAdoProject,

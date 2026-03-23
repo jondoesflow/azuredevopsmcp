@@ -575,13 +575,7 @@ export function App() {
       setShowValidationSuccess(true);
       if (response.enrichmentProcess) {
         const ep = response.enrichmentProcess;
-        if (ep.status === "migrated") {
-          logLine("Enrichment process migrated to target org successfully.");
-        } else if (ep.status === "found") {
-          logLine("Enrichment process already exists in target org.");
-        } else if (ep.status === "migration_failed") {
-          logLine(`Enrichment process migration failed: ${ep.message ?? "unknown error"}`);
-        }
+        logLine(`Enrichment: ${ep.message ?? ep.status}`);
       }
       setStatus("Successfully validated.");
       logLine("Connection validated successfully.");
@@ -752,11 +746,15 @@ export function App() {
             {showSourceAdoFields ? "Hide" : "Show"} enrichment process source config
           </button>
           {setupState?.enrichmentProcessStatus === "found" ? (
-            <span className="enrichment-status success">Enrichment process found</span>
-          ) : setupState?.enrichmentProcessStatus === "migrated" ? (
-            <span className="enrichment-status success">Enrichment process migrated</span>
+            <span className="enrichment-status success">Enrichment process active</span>
+          ) : setupState?.enrichmentProcessStatus === "migrated" || setupState?.enrichmentProcessStatus === "migrated_and_assigned" ? (
+            <span className="enrichment-status success">Process migrated &amp; assigned</span>
+          ) : setupState?.enrichmentProcessStatus === "assigned" ? (
+            <span className="enrichment-status success">Process assigned to project</span>
           ) : setupState?.enrichmentProcessStatus === "migration_failed" ? (
             <span className="enrichment-status error">Migration failed</span>
+          ) : setupState?.enrichmentProcessStatus === "not_checked" ? (
+            <span className="enrichment-status warning">Process not found — provide source config</span>
           ) : null}
         </div>
 

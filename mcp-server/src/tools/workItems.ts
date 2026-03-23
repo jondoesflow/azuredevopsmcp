@@ -3339,35 +3339,107 @@ export async function handleWorkItemTool(
       }
 
       case "migrate_process": {
-        const { checkEnrichmentProcessExists, migrateProcess } = await import("../processMigration.js");
+        const {
+          checkProjectHasEnrichmentProcess,
+          checkEnrichmentProcessExists,
+          migrateProcess,
+          assignProcessToProject,
+        } = await import("../processMigration.js");
 
-        if (!input.sourceOrgUrl || !input.sourcePat || !input.sourceProcessName || !input.targetOrgUrl || !input.targetPat) {
-          throw new Error("sourceOrgUrl, sourceProject, sourceProcessName, sourcePat, targetOrgUrl, and targetPat are all required.");
+        if (!input.targetOrgUrl || !input.targetPat) {
+          throw new Error("targetOrgUrl and targetPat are required.");
         }
 
-        const checkResult = await checkEnrichmentProcessExists(input.targetOrgUrl, input.targetPat);
-        if (checkResult.found) {
+        const targetProject = input.project;
+
+        // Step 1: Check if the project already uses a process with Enrichment fields
+        if (targetProject) {
+          const projectCheck = await checkProjectHasEnrichmentProcess(
+            input.targetOrgUrl, input.targetPat, targetProject,
+          );
+
+          if (projectCheck.hasEnrichment) {
+            return JSON.stringify({
+              result: "success",
+              status: "found",
+              message: `Project "${targetProject}" already uses process "${projectCheck.currentProcessName}" which has Enrichment fields.`,
+            });
+          }
+
+          // Project doesn't have enrichment — check if the org has it
+          if (projectCheck.enrichmentProcessId) {
+            // Enrichment process exists in org but project isn't using it — assign it
+            await assignProcessToProject(
+              input.targetOrgUrl, input.targetPat, targetProject, projectCheck.enrichmentProcessId,
+            );
+            return JSON.stringify({
+              result: "success",
+              status: "assigned",
+              message: `Project "${targetProject}" was using "${projectCheck.currentProcessName}". Switched to "${projectCheck.enrichmentProcessName}" which has Enrichment fields.`,
+            });
+          }
+        }
+
+        // Step 2: No enrichment process in org at all — migrate from source
+        if (!input.sourceOrgUrl || !input.sourcePat || !input.sourceProcessName) {
+          // Check org level as fallback (no project specified)
+          const orgCheck = await checkEnrichmentProcessExists(input.targetOrgUrl, input.targetPat);
+          if (orgCheck.found) {
+            // Enrichment exists in org — assign to project if specified
+            if (targetProject) {
+              await assignProcessToProject(
+                input.targetOrgUrl, input.targetPat, targetProject, orgCheck.processId!,
+              );
+              return JSON.stringify({
+                result: "success",
+                status: "assigned",
+                message: `Assigned Enrichment process "${orgCheck.processName}" to project "${targetProject}".`,
+              });
+            }
+            return JSON.stringify({
+              result: "success",
+              status: "found",
+              message: `Enrichment process "${orgCheck.processName}" already exists in target org.`,
+            });
+          }
+
           return JSON.stringify({
-            result: "success",
-            status: "found",
-            message: `Enrichment process "${checkResult.processName}" already exists in target org.`,
+            result: "error",
+            status: "not_configured",
+            message: "Enrichment process not found in target org. Provide source ADO config (sourceOrgUrl, sourcePat, sourceProcessName) to enable migration.",
           });
         }
 
+        // Step 3: Migrate from source org
         await migrateProcess({
           sourceOrgUrl: input.sourceOrgUrl,
           sourceProject: input.sourceProject ?? "",
           sourceProcessName: input.sourceProcessName,
           targetOrgUrl: input.targetOrgUrl,
-          targetProject: input.project ?? "",
+          targetProject: targetProject ?? "",
           sourcePat: input.sourcePat,
           targetPat: input.targetPat,
         });
 
+        // Step 4: After migration, assign the new process to the project
+        if (targetProject) {
+          const newOrgCheck = await checkEnrichmentProcessExists(input.targetOrgUrl, input.targetPat);
+          if (newOrgCheck.found && newOrgCheck.processId) {
+            await assignProcessToProject(
+              input.targetOrgUrl, input.targetPat, targetProject, newOrgCheck.processId,
+            );
+            return JSON.stringify({
+              result: "success",
+              status: "migrated_and_assigned",
+              message: `Enrichment process migrated and assigned to project "${targetProject}".`,
+            });
+          }
+        }
+
         return JSON.stringify({
           result: "success",
           status: "migrated",
-          message: "Enrichment process successfully migrated to target org.",
+          message: "Enrichment process migrated to target org.",
         });
       }
 

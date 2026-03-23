@@ -97,12 +97,96 @@ export async function checkEnrichmentProcessExists(
 }
 
 export interface EnrichmentCheckResult {
-  status: "found" | "migrated" | "not_checked" | "migration_failed";
+  status: "found" | "migrated" | "not_checked" | "migration_failed" | "assigned" | "migrated_and_assigned";
   message?: string;
+}
+
+async function callMcpTool(
+  mcpBaseUrl: string,
+  mcpApiKey: string,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<{ status: string; message: string }> {
+  const initResponse = await fetch(`${mcpBaseUrl}/mcp`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      apikey: mcpApiKey,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: "mcp-init",
+      method: "initialize",
+      params: {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "bff-enrichment-check", version: "1.0.0" },
+      },
+    }),
+  });
+
+  if (!initResponse.ok) {
+    throw new Error(`MCP initialize failed (${initResponse.status})`);
+  }
+
+  const sessionId = initResponse.headers.get("mcp-session-id");
+  if (!sessionId) {
+    throw new Error("MCP session id header missing");
+  }
+
+  try {
+    const toolResponse = await fetch(`${mcpBaseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        apikey: mcpApiKey,
+        "mcp-session-id": sessionId,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: `call-${toolName}`,
+        method: "tools/call",
+        params: { name: toolName, arguments: args },
+      }),
+    });
+
+    if (!toolResponse.ok) {
+      const text = await toolResponse.text().catch(() => "");
+      throw new Error(`MCP ${toolName} failed (${toolResponse.status}): ${text}`);
+    }
+
+    const contentType = toolResponse.headers.get("content-type")?.toLowerCase() ?? "";
+    let resultText: string;
+    if (contentType.includes("text/event-stream")) {
+      const raw = await toolResponse.text();
+      const dataLines = raw.split(/\r?\n/).filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trim()).filter(Boolean);
+      resultText = dataLines[dataLines.length - 1] ?? "{}";
+    } else {
+      resultText = await toolResponse.text();
+    }
+
+    const rpcResult = JSON.parse(resultText) as { result?: { content?: Array<{ text?: string }> }; error?: { message?: string } };
+    if (rpcResult.error) {
+      throw new Error(rpcResult.error.message ?? "Tool returned an error");
+    }
+
+    const toolText = rpcResult.result?.content?.[0]?.text;
+    if (!toolText) return { status: "unknown", message: "No response from tool" };
+
+    return JSON.parse(toolText) as { status: string; message: string };
+  } finally {
+    await fetch(`${mcpBaseUrl}/mcp`, {
+      method: "DELETE",
+      headers: { apikey: mcpApiKey, "mcp-session-id": sessionId },
+    }).catch(() => {});
+  }
 }
 
 export async function checkAndMigrateEnrichmentProcess(opts: {
   targetOrgUrl: string;
+  targetProject: string;
   targetPat: string;
   sourceOrgUrl?: string;
   sourceProject?: string;
@@ -112,105 +196,18 @@ export async function checkAndMigrateEnrichmentProcess(opts: {
   mcpApiKey: string;
 }): Promise<EnrichmentCheckResult> {
   try {
-    const result = await checkEnrichmentProcessExists(opts.targetOrgUrl, opts.targetPat);
-
-    if (result.found) {
-      return { status: "found", message: `Enrichment process "${result.processName}" exists in target org.` };
-    }
-
-    // Process not found — attempt migration if source config is provided
-    if (!opts.sourceOrgUrl || !opts.sourcePat || !opts.sourceProcessName) {
-      return {
-        status: "not_checked",
-        message: "Enrichment process not found in target org. Provide source ADO config to enable auto-migration.",
-      };
-    }
-
-    // Trigger migration via the MCP server's process migration by calling an MCP tool
-    const migrateResponse = await fetch(`${opts.mcpBaseUrl}/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        apikey: opts.mcpApiKey,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: "migrate-process-init",
-        method: "initialize",
-        params: {
-          protocolVersion: "2024-11-05",
-          capabilities: {},
-          clientInfo: { name: "bff-enrichment-check", version: "1.0.0" },
-        },
-      }),
+    const toolResult = await callMcpTool(opts.mcpBaseUrl, opts.mcpApiKey, "migrate_process", {
+      project: opts.targetProject,
+      targetOrgUrl: opts.targetOrgUrl,
+      targetPat: opts.targetPat,
+      sourceOrgUrl: opts.sourceOrgUrl,
+      sourceProject: opts.sourceProject,
+      sourceProcessName: opts.sourceProcessName,
+      sourcePat: opts.sourcePat,
     });
 
-    if (!migrateResponse.ok) {
-      throw new Error(`MCP initialize failed (${migrateResponse.status})`);
-    }
-
-    const sessionId = migrateResponse.headers.get("mcp-session-id");
-    if (!sessionId) {
-      throw new Error("MCP session id header missing");
-    }
-
-    try {
-      const toolResponse = await fetch(`${opts.mcpBaseUrl}/mcp`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-          apikey: opts.mcpApiKey,
-          "mcp-session-id": sessionId,
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: "migrate-process-call",
-          method: "tools/call",
-          params: {
-            name: "migrate_process",
-            arguments: {
-              sourceOrgUrl: opts.sourceOrgUrl,
-              sourceProject: opts.sourceProject,
-              sourceProcessName: opts.sourceProcessName,
-              sourcePat: opts.sourcePat,
-              targetOrgUrl: opts.targetOrgUrl,
-              targetPat: opts.targetPat,
-            },
-          },
-        }),
-      });
-
-      if (!toolResponse.ok) {
-        const text = await toolResponse.text().catch(() => "");
-        throw new Error(`MCP migrate_process call failed (${toolResponse.status}): ${text}`);
-      }
-
-      // Parse SSE or JSON response
-      const contentType = toolResponse.headers.get("content-type")?.toLowerCase() ?? "";
-      let resultText: string;
-      if (contentType.includes("text/event-stream")) {
-        const raw = await toolResponse.text();
-        const dataLines = raw.split(/\r?\n/).filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trim()).filter(Boolean);
-        resultText = dataLines[dataLines.length - 1] ?? "{}";
-      } else {
-        resultText = await toolResponse.text();
-      }
-
-      const parsed = JSON.parse(resultText) as { result?: { content?: Array<{ text?: string }> }; error?: { message?: string } };
-      if (parsed.error) {
-        throw new Error(parsed.error.message ?? "Migration tool returned an error");
-      }
-
-      return { status: "migrated", message: "Enrichment process successfully migrated to target org." };
-    } finally {
-      // Close MCP session
-      await fetch(`${opts.mcpBaseUrl}/mcp`, {
-        method: "DELETE",
-        headers: { apikey: opts.mcpApiKey, "mcp-session-id": sessionId },
-      }).catch(() => {});
-    }
+    const status = toolResult.status as EnrichmentCheckResult["status"];
+    return { status, message: toolResult.message };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { status: "migration_failed", message: msg };

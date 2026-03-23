@@ -151,6 +151,141 @@ async function adoFetch<T>(
 }
 
 // ---------------------------------------------------------------------------
+// Project-process queries
+// ---------------------------------------------------------------------------
+
+interface AdoProjectProperties {
+  value: Array<{ name: string; value: string }>;
+}
+
+/**
+ * Returns the process template ID and name currently assigned to a project.
+ */
+export async function getProjectProcess(
+  orgUrl: string,
+  pat: string,
+  projectName: string,
+): Promise<{ processId: string; processName: string } | undefined> {
+  try {
+    const props = await adoFetch<AdoProjectProperties>(
+      orgUrl,
+      pat,
+      `_apis/projects/${encodeURIComponent(projectName)}/properties`,
+    );
+    const processIdProp = props.value.find(
+      (p) => p.name === "System.ProcessTemplateType",
+    );
+    if (!processIdProp) return undefined;
+
+    const processId = processIdProp.value;
+    const processList = await adoFetch<{ value: AdoProcess[] }>(
+      orgUrl,
+      pat,
+      "_apis/work/processes",
+    );
+    const matched = processList.value.find((p) => p.typeId === processId);
+    return {
+      processId,
+      processName: matched?.name ?? "Unknown",
+    };
+  } catch (err) {
+    logger.warn("Could not determine project process", {
+      project: projectName,
+      error: String(err),
+    });
+    return undefined;
+  }
+}
+
+/**
+ * Checks whether a specific project is using a process that has Enrichment
+ * fields. Returns the enrichment process details if found, or undefined.
+ */
+export async function checkProjectHasEnrichmentProcess(
+  orgUrl: string,
+  pat: string,
+  projectName: string,
+): Promise<{ hasEnrichment: boolean; currentProcessName: string; enrichmentProcessId?: string; enrichmentProcessName?: string }> {
+  const projectProc = await getProjectProcess(orgUrl, pat, projectName);
+  if (!projectProc) {
+    return { hasEnrichment: false, currentProcessName: "Unknown" };
+  }
+
+  // Check if the project's current process has Enrichment fields
+  try {
+    const witList = await adoFetch<{ value: AdoWorkItemType[] }>(
+      orgUrl,
+      pat,
+      `_apis/work/processes/${projectProc.processId}/workitemtypes`,
+    );
+
+    for (const wit of witList.value) {
+      try {
+        const fieldList = await adoFetch<{ value: AdoField[] }>(
+          orgUrl,
+          pat,
+          `_apis/work/processes/${projectProc.processId}/workitemtypes/${wit.referenceName}/fields`,
+        );
+        const hasEnrichment = fieldList.value.some((f) =>
+          f.referenceName.includes("Enrichment"),
+        );
+        if (hasEnrichment) {
+          return {
+            hasEnrichment: true,
+            currentProcessName: projectProc.processName,
+            enrichmentProcessId: projectProc.processId,
+            enrichmentProcessName: projectProc.processName,
+          };
+        }
+      } catch {
+        continue;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // The project's own process doesn't have enrichment — find the org-wide enrichment process
+  const orgCheck = await checkEnrichmentProcessExists(orgUrl, pat);
+  return {
+    hasEnrichment: false,
+    currentProcessName: projectProc.processName,
+    enrichmentProcessId: orgCheck.found ? orgCheck.processId : undefined,
+    enrichmentProcessName: orgCheck.found ? orgCheck.processName : undefined,
+  };
+}
+
+/**
+ * Changes a project's process template to the specified process.
+ */
+export async function assignProcessToProject(
+  orgUrl: string,
+  pat: string,
+  projectName: string,
+  targetProcessId: string,
+): Promise<void> {
+  logger.info(`Assigning process ${targetProcessId} to project "${projectName}"…`);
+
+  // Get the project ID first
+  const project = await adoFetch<{ id: string; name: string }>(
+    orgUrl,
+    pat,
+    `_apis/projects/${encodeURIComponent(projectName)}`,
+  );
+
+  // Change the process template via the REST API
+  await adoFetch(
+    orgUrl,
+    pat,
+    `_apis/work/processes/${targetProcessId}/projects/${project.id}`,
+    "PUT",
+    {},
+  );
+
+  logger.info(`  Process assigned to project "${projectName}" successfully`);
+}
+
+// ---------------------------------------------------------------------------
 // Pre-flight check — does the target org already have Enrichment fields?
 // ---------------------------------------------------------------------------
 

@@ -438,13 +438,136 @@ button:disabled {
 }
 
 .modal-card {
-  width: min(540px, 100%);
+  width: min(660px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
   border-radius: 14px;
   background: #fff;
   border: 1px solid #c9d8ea;
-  padding: 18px;
+  box-shadow: 0 20px 50px rgba(0, 30, 60, 0.25);
+  padding: 24px;
   display: grid;
+  gap: 14px;
+}
+
+.modal-card h3 {
+  margin: 0 0 4px;
+  font-size: 1.25rem;
+}
+
+.modal-card > p {
+  margin: 0;
+  color: #3a5a7a;
+  font-size: 0.92rem;
+}
+
+.modal-card .platform-choice {
+  margin-bottom: 4px;
+}
+
+.modal-card label {
+  display: grid;
+  gap: 5px;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.modal-card input {
+  border: 1px solid #9cb4ca;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #fff;
+  font-size: 0.9rem;
+}
+
+.modal-card input:focus {
+  outline: 2px solid #0058ab;
+  outline-offset: 1px;
+  border-color: #0058ab;
+}
+
+.modal-card .setup-actions {
+  margin-top: 4px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Source ADO config section */
+.source-ado-toggle {
+  display: flex;
+  align-items: center;
   gap: 12px;
+  margin-top: 6px;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: #0058ab;
+  cursor: pointer;
+  padding: 0;
+  font-size: 0.88rem;
+  text-decoration: underline;
+  font-weight: 500;
+}
+
+.link-button:hover {
+  color: #003d7a;
+}
+
+.source-ado-fieldset {
+  border: 1px solid #b8cedf;
+  border-radius: 10px;
+  padding: 14px;
+  margin: 4px 0 0;
+  background: #f5f9fd;
+  display: grid;
+  gap: 10px;
+}
+
+.source-ado-fieldset legend {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #1a3a5c;
+  padding: 0 6px;
+}
+
+.field-help {
+  margin: 0;
+  font-size: 0.84rem;
+  color: #4a6a8a;
+  line-height: 1.4;
+  font-weight: 400;
+}
+
+.enrichment-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+
+.enrichment-status.success {
+  background: #dff5e3;
+  color: #0d6b2e;
+  border: 1px solid #a3d9b1;
+}
+
+.enrichment-status.warning {
+  background: #fff8e1;
+  color: #7a5a00;
+  border: 1px solid #e0c850;
+}
+
+.enrichment-status.error {
+  background: #fde8e8;
+  color: #9b1c1c;
+  border: 1px solid #e8a0a0;
 }
 
 @media (max-width: 920px) {
