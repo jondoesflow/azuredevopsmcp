@@ -36,6 +36,10 @@ export interface SetupConnectionInput {
   jiraBaseUrl?: string;
   jiraProject?: string;
   jiraApiToken?: string;
+  sourceAdoOrgUrl?: string;
+  sourceAdoProject?: string;
+  sourceAdoProcessName?: string;
+  sourceAdoPat?: string;
 }
 
 export interface SetupConnectionState {
@@ -48,6 +52,11 @@ export interface SetupConnectionState {
   hasAzureDevOpsPat: boolean;
   hasJiraApiToken: boolean;
   isValidated: boolean;
+  sourceAdoOrgUrl?: string;
+  sourceAdoProject?: string;
+  sourceAdoProcessName?: string;
+  hasSourceAdoPat: boolean;
+  enrichmentProcessStatus?: "found" | "migrated" | "not_checked" | "migration_failed";
 }
 
 export type ChatIntent =

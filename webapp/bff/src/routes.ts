@@ -5,6 +5,7 @@ import { buildHelpMessage, parseChatIntent } from "./chat/intents.js";
 import { AppConfig, AuthenticatedUser, ChatRequestBody, SetupConnectionInput } from "./types.js";
 import { McpClient } from "./mcpClient.js";
 import { SetupStore } from "./setupStore.js";
+import { checkAndMigrateEnrichmentProcess, EnrichmentCheckResult } from "./enrichmentCheck.js";
 
 const validateRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -68,6 +69,10 @@ function parseSetupBody(req: Request): SetupConnectionInput {
     jiraBaseUrl: normalizeOptionalString(body?.jiraBaseUrl),
     jiraProject: normalizeOptionalString(body?.jiraProject),
     jiraApiToken: normalizeOptionalString(body?.jiraApiToken),
+    sourceAdoOrgUrl: normalizeOptionalString(body?.sourceAdoOrgUrl),
+    sourceAdoProject: normalizeOptionalString(body?.sourceAdoProject),
+    sourceAdoProcessName: normalizeOptionalString(body?.sourceAdoProcessName),
+    sourceAdoPat: normalizeOptionalString(body?.sourceAdoPat),
   };
 }
 
@@ -243,6 +248,8 @@ export function createApiRouter(config: AppConfig) {
       const state = setupStore.save(body, userId);
       const secrets = setupStore.getSecrets(userId);
 
+      let enrichmentResult: EnrichmentCheckResult | undefined;
+
       if (state.platform === "azure-devops") {
         const url = getAzureDevOpsUrl(state.azureDevOpsOrg, state.azureDevOpsUrl);
         if (!url || !state.azureDevOpsProject || !secrets.azureDevOpsPat) {
@@ -250,6 +257,19 @@ export function createApiRouter(config: AppConfig) {
           return;
         }
         await validateAzureDevOpsConnection(url, state.azureDevOpsProject, secrets.azureDevOpsPat);
+
+        // Check and optionally migrate the enrichment process
+        enrichmentResult = await checkAndMigrateEnrichmentProcess({
+          targetOrgUrl: url,
+          targetPat: secrets.azureDevOpsPat,
+          sourceOrgUrl: state.sourceAdoOrgUrl,
+          sourceProject: state.sourceAdoProject,
+          sourceProcessName: state.sourceAdoProcessName,
+          sourcePat: secrets.sourceAdoPat,
+          mcpBaseUrl: config.mcpBaseUrl,
+          mcpApiKey: config.mcpApiKey,
+        });
+        setupStore.setEnrichmentStatus(userId, enrichmentResult.status);
       } else if (state.platform === "jira") {
         if (!state.jiraBaseUrl || !state.jiraProject || !secrets.jiraApiToken) {
           res.status(400).json({ error: "Jira URL, project name, and PAT token are required." });
@@ -262,7 +282,11 @@ export function createApiRouter(config: AppConfig) {
       }
 
       const validated = setupStore.markValidated(userId);
-      res.json({ validated: true, state: validated });
+      res.json({
+        validated: true,
+        state: validated,
+        ...(enrichmentResult ? { enrichmentProcess: enrichmentResult } : {}),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Connection validation failed";
       res.status(400).json({ validated: false, error: message });

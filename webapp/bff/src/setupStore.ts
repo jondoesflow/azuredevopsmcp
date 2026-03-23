@@ -59,6 +59,11 @@ interface ConnectionDefaults {
   jiraProject?: string;
   jiraApiToken?: string;
   isValidated: boolean;
+  sourceAdoOrgUrl?: string;
+  sourceAdoProject?: string;
+  sourceAdoProcessName?: string;
+  sourceAdoPat?: string;
+  enrichmentProcessStatus?: "found" | "migrated" | "not_checked" | "migration_failed";
 }
 
 interface StoredUserConfig extends ConnectionDefaults {
@@ -125,6 +130,7 @@ function encryptStoredUserConfig(config: StoredUserConfig): StoredUserConfig {
     ...config,
     azureDevOpsPat: encryptSecret(config.azureDevOpsPat),
     jiraApiToken: encryptSecret(config.jiraApiToken),
+    sourceAdoPat: encryptSecret(config.sourceAdoPat),
   };
 }
 
@@ -133,6 +139,7 @@ function decryptStoredUserConfig(config: StoredUserConfig): StoredUserConfig {
     ...config,
     azureDevOpsPat: decryptSecret(config.azureDevOpsPat),
     jiraApiToken: decryptSecret(config.jiraApiToken),
+    sourceAdoPat: decryptSecret(config.sourceAdoPat),
   };
 }
 
@@ -200,6 +207,11 @@ export class SetupStore {
       jiraProject: userConfig?.jiraProject ?? normalizeOptional(process.env.JIRA_PROJECT) ?? this.defaults.jiraProject,
       jiraApiToken: userConfig?.jiraApiToken ?? normalizeOptional(process.env.JIRA_API_TOKEN) ?? normalizeOptional(process.env.JIRA_PAT) ?? this.defaults.jiraApiToken,
       isValidated: userConfig?.isValidated ?? this.defaults.isValidated,
+      sourceAdoOrgUrl: userConfig?.sourceAdoOrgUrl ?? normalizeOptional(process.env.SOURCE_ADO_ORG_URL) ?? this.defaults.sourceAdoOrgUrl,
+      sourceAdoProject: userConfig?.sourceAdoProject ?? normalizeOptional(process.env.SOURCE_ADO_PROJECT) ?? this.defaults.sourceAdoProject,
+      sourceAdoProcessName: userConfig?.sourceAdoProcessName ?? normalizeOptional(process.env.SOURCE_ADO_PROCESS_NAME) ?? this.defaults.sourceAdoProcessName,
+      sourceAdoPat: userConfig?.sourceAdoPat ?? normalizeOptional(process.env.SOURCE_ADO_PAT) ?? this.defaults.sourceAdoPat,
+      enrichmentProcessStatus: userConfig?.enrichmentProcessStatus ?? this.defaults.enrichmentProcessStatus,
     };
   }
 
@@ -215,14 +227,20 @@ export class SetupStore {
       hasAzureDevOpsPat: Boolean(resolved.azureDevOpsPat),
       hasJiraApiToken: Boolean(resolved.jiraApiToken),
       isValidated: resolved.isValidated,
+      sourceAdoOrgUrl: resolved.sourceAdoOrgUrl,
+      sourceAdoProject: resolved.sourceAdoProject,
+      sourceAdoProcessName: resolved.sourceAdoProcessName,
+      hasSourceAdoPat: Boolean(resolved.sourceAdoPat),
+      enrichmentProcessStatus: resolved.enrichmentProcessStatus,
     };
   }
 
-  getSecrets(userId?: string): { azureDevOpsPat?: string; jiraApiToken?: string } {
+  getSecrets(userId?: string): { azureDevOpsPat?: string; jiraApiToken?: string; sourceAdoPat?: string } {
     const resolved = this.resolveForUser(userId);
     return {
       azureDevOpsPat: resolved.azureDevOpsPat,
       jiraApiToken: resolved.jiraApiToken,
+      sourceAdoPat: resolved.sourceAdoPat,
     };
   }
 
@@ -238,6 +256,11 @@ export class SetupStore {
       jiraProject: normalizeOptional(input.jiraProject) ?? current.jiraProject,
       jiraApiToken: normalizeOptional(input.jiraApiToken) ?? current.jiraApiToken,
       isValidated: false,
+      sourceAdoOrgUrl: normalizeOptional(input.sourceAdoOrgUrl) ?? current.sourceAdoOrgUrl,
+      sourceAdoProject: normalizeOptional(input.sourceAdoProject) ?? current.sourceAdoProject,
+      sourceAdoProcessName: normalizeOptional(input.sourceAdoProcessName) ?? current.sourceAdoProcessName,
+      sourceAdoPat: normalizeOptional(input.sourceAdoPat) ?? current.sourceAdoPat,
+      enrichmentProcessStatus: current.enrichmentProcessStatus,
     };
 
     if (userId) {
@@ -275,6 +298,15 @@ export class SetupStore {
     );
 
     return this.getState(userId);
+  }
+
+  setEnrichmentStatus(userId: string | undefined, status: "found" | "migrated" | "not_checked" | "migration_failed"): void {
+    if (userId) {
+      const existing = readPerUser();
+      const current = existing[userId] ?? { ...this.resolveForUser(userId), updatedAt: new Date().toISOString() };
+      existing[userId] = { ...current, enrichmentProcessStatus: status, updatedAt: new Date().toISOString() };
+      writePerUser(existing);
+    }
   }
 
   markValidated(userId?: string): SetupConnectionState {

@@ -113,6 +113,10 @@ export interface SetupConfigPayload {
   jiraBaseUrl?: string;
   jiraProject?: string;
   jiraApiToken?: string;
+  sourceAdoOrgUrl?: string;
+  sourceAdoProject?: string;
+  sourceAdoProcessName?: string;
+  sourceAdoPat?: string;
 }
 
 export interface SetupConfigState {
@@ -125,10 +129,19 @@ export interface SetupConfigState {
   hasAzureDevOpsPat: boolean;
   hasJiraApiToken: boolean;
   isValidated: boolean;
+  sourceAdoOrgUrl?: string;
+  sourceAdoProject?: string;
+  sourceAdoProcessName?: string;
+  hasSourceAdoPat: boolean;
+  enrichmentProcessStatus?: "found" | "migrated" | "not_checked" | "migration_failed";
 }
 
 export interface ValidateSetupResponse {
   validated: boolean;
   state: SetupConfigState;
   error?: string;
+  enrichmentProcess?: {
+    status: "found" | "migrated" | "not_checked" | "migration_failed";
+    message?: string;
+  };
 }

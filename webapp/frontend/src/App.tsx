@@ -184,6 +184,12 @@ export function App() {
   const [jiraProject, setJiraProject] = useState("");
   const [jiraApiToken, setJiraApiToken] = useState("");
 
+  const [sourceAdoOrgUrl, setSourceAdoOrgUrl] = useState("");
+  const [sourceAdoProject, setSourceAdoProject] = useState("");
+  const [sourceAdoProcessName, setSourceAdoProcessName] = useState("CustomAgile");
+  const [sourceAdoPat, setSourceAdoPat] = useState("");
+  const [showSourceAdoFields, setShowSourceAdoFields] = useState(false);
+
   const [analysisMode, setAnalysisMode] = useState<"process" | "themes">("process");
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [busy, setBusy] = useState(false);
@@ -334,6 +340,10 @@ export function App() {
     setAzureDevOpsProject(state.azureDevOpsProject ?? "");
     setJiraBaseUrl(state.jiraBaseUrl ?? "");
     setJiraProject(state.jiraProject ?? "");
+    setSourceAdoOrgUrl(state.sourceAdoOrgUrl ?? "");
+    setSourceAdoProject(state.sourceAdoProject ?? "");
+    setSourceAdoProcessName(state.sourceAdoProcessName ?? "CustomAgile");
+    if (state.sourceAdoOrgUrl) setShowSourceAdoFields(true);
     setConnectionChoiceAcknowledged(false);
   }
 
@@ -508,6 +518,10 @@ export function App() {
       jiraBaseUrl: jiraBaseUrl.trim() || undefined,
       jiraProject: jiraProject.trim() || undefined,
       jiraApiToken: includeSecrets ? jiraApiToken.trim() || undefined : undefined,
+      sourceAdoOrgUrl: sourceAdoOrgUrl.trim() || undefined,
+      sourceAdoProject: sourceAdoProject.trim() || undefined,
+      sourceAdoProcessName: sourceAdoProcessName.trim() || undefined,
+      sourceAdoPat: includeSecrets ? sourceAdoPat.trim() || undefined : undefined,
     };
   }
 
@@ -559,6 +573,16 @@ export function App() {
       const response = await validateSetupConfig(token, currentSetupPayload(!useExistingSecrets));
       hydrateSetup(response.state);
       setShowValidationSuccess(true);
+      if (response.enrichmentProcess) {
+        const ep = response.enrichmentProcess;
+        if (ep.status === "migrated") {
+          logLine("Enrichment process migrated to target org successfully.");
+        } else if (ep.status === "found") {
+          logLine("Enrichment process already exists in target org.");
+        } else if (ep.status === "migration_failed") {
+          logLine(`Enrichment process migration failed: ${ep.message ?? "unknown error"}`);
+        }
+      }
       setStatus("Successfully validated.");
       logLine("Connection validated successfully.");
     } catch (validationError) {
@@ -722,6 +746,62 @@ export function App() {
             onChange={(event) => setAzureDevOpsPat(event.target.value)}
           />
         </label>
+
+        <div className="source-ado-toggle">
+          <button type="button" className="link-button" onClick={() => setShowSourceAdoFields((v) => !v)}>
+            {showSourceAdoFields ? "Hide" : "Show"} enrichment process source config
+          </button>
+          {setupState?.enrichmentProcessStatus === "found" ? (
+            <span className="enrichment-status success">Enrichment process found</span>
+          ) : setupState?.enrichmentProcessStatus === "migrated" ? (
+            <span className="enrichment-status success">Enrichment process migrated</span>
+          ) : setupState?.enrichmentProcessStatus === "migration_failed" ? (
+            <span className="enrichment-status error">Migration failed</span>
+          ) : null}
+        </div>
+
+        {showSourceAdoFields ? (
+          <fieldset className="source-ado-fieldset">
+            <legend>Enrichment process source (optional)</legend>
+            <p className="field-help">
+              If your target org does not have the Enrichment process, provide the source org details below.
+              The process will be automatically migrated during validation.
+            </p>
+            <label>
+              Source ADO organization URL
+              <input
+                placeholder="https://dev.azure.com/source-org"
+                value={sourceAdoOrgUrl}
+                onChange={(event) => setSourceAdoOrgUrl(event.target.value)}
+              />
+            </label>
+            <label>
+              Source ADO project name
+              <input
+                placeholder="Source project name"
+                value={sourceAdoProject}
+                onChange={(event) => setSourceAdoProject(event.target.value)}
+              />
+            </label>
+            <label>
+              Source ADO process name
+              <input
+                placeholder="CustomAgile"
+                value={sourceAdoProcessName}
+                onChange={(event) => setSourceAdoProcessName(event.target.value)}
+              />
+            </label>
+            <label>
+              Source ADO PAT token
+              <input
+                type="password"
+                placeholder={setupState?.hasSourceAdoPat ? "Leave blank to keep saved token" : "PAT with Process: Read scope"}
+                value={sourceAdoPat}
+                onChange={(event) => setSourceAdoPat(event.target.value)}
+              />
+            </label>
+          </fieldset>
+        ) : null}
       </>
     );
   }

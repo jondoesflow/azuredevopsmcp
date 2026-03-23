@@ -40,6 +40,7 @@ async function persistAdoDependencies(
     const dependency: WorkItemDependencies | undefined = item.enrichment?.dependencies;
     if (!dependency) continue;
 
+    // dependsOn: source depends on target (predecessor link)
     for (const depId of dependency.dependsOn) {
       const targetStoryId = storyIdByPreviewId.get(depId);
       if (!targetStoryId || targetStoryId === sourceStoryId) continue;
@@ -48,11 +49,32 @@ async function persistAdoDependencies(
           project,
           sourceWorkItemId: sourceStoryId,
           targetWorkItemId: targetStoryId,
-          relationType: "System.LinkTypes.Related",
+          relationType: "System.LinkTypes.Dependency-Forward",
         });
         linkCount++;
       } catch (error) {
-        logger.warn("Unable to persist Azure DevOps dependency relation", {
+        logger.warn("Unable to persist Azure DevOps dependsOn relation", {
+          sourceStoryId,
+          targetStoryId,
+          error: String(error),
+        });
+      }
+    }
+
+    // blocks: source blocks target (reverse dependency link)
+    for (const blockedId of dependency.blocks) {
+      const targetStoryId = storyIdByPreviewId.get(blockedId);
+      if (!targetStoryId || targetStoryId === sourceStoryId) continue;
+      try {
+        await client.addRelation({
+          project,
+          sourceWorkItemId: sourceStoryId,
+          targetWorkItemId: targetStoryId,
+          relationType: "System.LinkTypes.Dependency-Reverse",
+        });
+        linkCount++;
+      } catch (error) {
+        logger.warn("Unable to persist Azure DevOps blocks relation", {
           sourceStoryId,
           targetStoryId,
           error: String(error),
@@ -1118,6 +1140,40 @@ export const workItemTools: Tool[] = [
       required: ["project"],
     },
   },
+  {
+    name: "migrate_process",
+    description: "Checks whether the target Azure DevOps org has the Enrichment process. If not, migrates it from the source org. Returns the status of the migration.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        sourceOrgUrl: {
+          type: "string",
+          description: "Source Azure DevOps organization URL (e.g. https://dev.azure.com/source-org).",
+        },
+        sourceProject: {
+          type: "string",
+          description: "Source project name.",
+        },
+        sourceProcessName: {
+          type: "string",
+          description: "Name of the process to migrate (e.g. CustomAgile).",
+        },
+        sourcePat: {
+          type: "string",
+          description: "PAT for the source org with Process: Read scope.",
+        },
+        targetOrgUrl: {
+          type: "string",
+          description: "Target Azure DevOps organization URL.",
+        },
+        targetPat: {
+          type: "string",
+          description: "PAT for the target org with Process: Read & Write scope.",
+        },
+      },
+      required: ["sourceOrgUrl", "sourceProject", "sourceProcessName", "sourcePat", "targetOrgUrl", "targetPat"],
+    },
+  },
 ];
 
 interface ToolInput {
@@ -1159,6 +1215,13 @@ interface ToolInput {
   includePreview?: boolean;
   previewFileName?: string;
   reviewOnly?: boolean;
+  // migrate_process fields
+  sourceOrgUrl?: string;
+  sourceProject?: string;
+  sourceProcessName?: string;
+  sourcePat?: string;
+  targetOrgUrl?: string;
+  targetPat?: string;
 }
 
 interface WorkItemClients {
@@ -3273,6 +3336,39 @@ export async function handleWorkItemTool(
           description: input.description,
         });
         return JSON.stringify({ result: "success", id: updated.id });
+      }
+
+      case "migrate_process": {
+        const { checkEnrichmentProcessExists, migrateProcess } = await import("../processMigration.js");
+
+        if (!input.sourceOrgUrl || !input.sourcePat || !input.sourceProcessName || !input.targetOrgUrl || !input.targetPat) {
+          throw new Error("sourceOrgUrl, sourceProject, sourceProcessName, sourcePat, targetOrgUrl, and targetPat are all required.");
+        }
+
+        const checkResult = await checkEnrichmentProcessExists(input.targetOrgUrl, input.targetPat);
+        if (checkResult.found) {
+          return JSON.stringify({
+            result: "success",
+            status: "found",
+            message: `Enrichment process "${checkResult.processName}" already exists in target org.`,
+          });
+        }
+
+        await migrateProcess({
+          sourceOrgUrl: input.sourceOrgUrl,
+          sourceProject: input.sourceProject ?? "",
+          sourceProcessName: input.sourceProcessName,
+          targetOrgUrl: input.targetOrgUrl,
+          targetProject: input.project ?? "",
+          sourcePat: input.sourcePat,
+          targetPat: input.targetPat,
+        });
+
+        return JSON.stringify({
+          result: "success",
+          status: "migrated",
+          message: "Enrichment process successfully migrated to target org.",
+        });
       }
 
       default:
