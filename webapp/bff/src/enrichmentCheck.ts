@@ -97,7 +97,7 @@ export async function checkEnrichmentProcessExists(
 }
 
 export interface EnrichmentCheckResult {
-  status: "found" | "migrated" | "not_checked" | "migration_failed" | "assigned" | "migrated_and_assigned";
+  status: "found" | "migrated" | "not_checked" | "migration_failed" | "assigned" | "migrated_and_assigned" | "project_created";
   message?: string;
 }
 

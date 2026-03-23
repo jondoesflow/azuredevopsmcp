@@ -151,138 +151,85 @@ async function adoFetch<T>(
 }
 
 // ---------------------------------------------------------------------------
-// Project-process queries
+// Project helpers — check existence and create with a process template
 // ---------------------------------------------------------------------------
 
-interface AdoProjectProperties {
-  value: Array<{ name: string; value: string }>;
-}
-
 /**
- * Returns the process template ID and name currently assigned to a project.
+ * Returns true if a project with the given name exists in the org.
  */
-export async function getProjectProcess(
+export async function projectExists(
   orgUrl: string,
   pat: string,
   projectName: string,
-): Promise<{ processId: string; processName: string } | undefined> {
+): Promise<boolean> {
   try {
-    const props = await adoFetch<AdoProjectProperties>(
+    await adoFetch<{ id: string }>(
       orgUrl,
       pat,
-      `_apis/projects/${encodeURIComponent(projectName)}/properties`,
+      `_apis/projects/${encodeURIComponent(projectName)}`,
     );
-    const processIdProp = props.value.find(
-      (p) => p.name === "System.ProcessTemplateType",
-    );
-    if (!processIdProp) return undefined;
-
-    const processId = processIdProp.value;
-    const processList = await adoFetch<{ value: AdoProcess[] }>(
-      orgUrl,
-      pat,
-      "_apis/work/processes",
-    );
-    const matched = processList.value.find((p) => p.typeId === processId);
-    return {
-      processId,
-      processName: matched?.name ?? "Unknown",
-    };
-  } catch (err) {
-    logger.warn("Could not determine project process", {
-      project: projectName,
-      error: String(err),
-    });
-    return undefined;
-  }
-}
-
-/**
- * Checks whether a specific project is using a process that has Enrichment
- * fields. Returns the enrichment process details if found, or undefined.
- */
-export async function checkProjectHasEnrichmentProcess(
-  orgUrl: string,
-  pat: string,
-  projectName: string,
-): Promise<{ hasEnrichment: boolean; currentProcessName: string; enrichmentProcessId?: string; enrichmentProcessName?: string }> {
-  const projectProc = await getProjectProcess(orgUrl, pat, projectName);
-  if (!projectProc) {
-    return { hasEnrichment: false, currentProcessName: "Unknown" };
-  }
-
-  // Check if the project's current process has Enrichment fields
-  try {
-    const witList = await adoFetch<{ value: AdoWorkItemType[] }>(
-      orgUrl,
-      pat,
-      `_apis/work/processes/${projectProc.processId}/workitemtypes`,
-    );
-
-    for (const wit of witList.value) {
-      try {
-        const fieldList = await adoFetch<{ value: AdoField[] }>(
-          orgUrl,
-          pat,
-          `_apis/work/processes/${projectProc.processId}/workitemtypes/${wit.referenceName}/fields`,
-        );
-        const hasEnrichment = fieldList.value.some((f) =>
-          f.referenceName.includes("Enrichment"),
-        );
-        if (hasEnrichment) {
-          return {
-            hasEnrichment: true,
-            currentProcessName: projectProc.processName,
-            enrichmentProcessId: projectProc.processId,
-            enrichmentProcessName: projectProc.processName,
-          };
-        }
-      } catch {
-        continue;
-      }
-    }
+    return true;
   } catch {
-    // ignore
+    return false;
   }
+}
 
-  // The project's own process doesn't have enrichment — find the org-wide enrichment process
-  const orgCheck = await checkEnrichmentProcessExists(orgUrl, pat);
-  return {
-    hasEnrichment: false,
-    currentProcessName: projectProc.processName,
-    enrichmentProcessId: orgCheck.found ? orgCheck.processId : undefined,
-    enrichmentProcessName: orgCheck.found ? orgCheck.processName : undefined,
-  };
+interface AdoOperation {
+  id: string;
+  status: string; // "notSet" | "queued" | "inProgress" | "cancelled" | "succeeded" | "failed"
+  resultMessage?: string;
 }
 
 /**
- * Changes a project's process template to the specified process.
+ * Creates a new ADO project using the specified process template.
+ * Polls the operation until it succeeds (max ~60 s).
  */
-export async function assignProcessToProject(
+export async function createProject(
   orgUrl: string,
   pat: string,
   projectName: string,
-  targetProcessId: string,
+  processId: string,
+  description?: string,
 ): Promise<void> {
-  logger.info(`Assigning process ${targetProcessId} to project "${projectName}"…`);
+  logger.info(`Creating project "${projectName}" with process ${processId}…`);
 
-  // Get the project ID first
-  const project = await adoFetch<{ id: string; name: string }>(
+  const op = await adoFetch<AdoOperation>(
     orgUrl,
     pat,
-    `_apis/projects/${encodeURIComponent(projectName)}`,
+    "_apis/projects",
+    "POST",
+    {
+      name: projectName,
+      description: description ?? "Created by SPARC ADO MCP",
+      visibility: "private" as const,
+      capabilities: {
+        versioncontrol: { sourceControlType: "Git" },
+        processTemplate: { templateTypeId: processId },
+      },
+    },
   );
 
-  // Change the process template via the REST API
-  await adoFetch(
-    orgUrl,
-    pat,
-    `_apis/work/processes/${targetProcessId}/projects/${project.id}`,
-    "PUT",
-    {},
-  );
-
-  logger.info(`  Process assigned to project "${projectName}" successfully`);
+  // Poll until the operation finishes
+  const maxAttempts = 20;
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise((r) => setTimeout(r, 3000));
+    const status = await adoFetch<AdoOperation>(
+      orgUrl,
+      pat,
+      `_apis/operations/${op.id}`,
+    );
+    if (status.status === "succeeded") {
+      logger.info(`  Project "${projectName}" created successfully`);
+      return;
+    }
+    if (status.status === "failed" || status.status === "cancelled") {
+      throw new Error(
+        `Project creation ${status.status}: ${status.resultMessage ?? "unknown error"}`,
+      );
+    }
+    logger.info(`  Project creation status: ${status.status} (attempt ${i + 1}/${maxAttempts})`);
+  }
+  throw new Error(`Project creation timed out after ${maxAttempts * 3}s`);
 }
 
 // ---------------------------------------------------------------------------

@@ -728,8 +728,13 @@ export function App() {
           />
         </label>
         <label>
-          Azure DevOps project name
-          <input value={azureDevOpsProject} onChange={(event) => setAzureDevOpsProject(event.target.value)} />
+          Target project name
+          <input
+            placeholder="New or existing project name"
+            value={azureDevOpsProject}
+            onChange={(event) => setAzureDevOpsProject(event.target.value)}
+          />
+          <p className="field-help">Enter a new project name to create, or an existing project that already uses the Enrichment process.</p>
         </label>
         <label>
           Azure DevOps PAT token
@@ -747,8 +752,10 @@ export function App() {
           </button>
           {setupState?.enrichmentProcessStatus === "found" ? (
             <span className="enrichment-status success">Enrichment process active</span>
+          ) : setupState?.enrichmentProcessStatus === "project_created" ? (
+            <span className="enrichment-status success">Project created with Enrichment</span>
           ) : setupState?.enrichmentProcessStatus === "migrated" || setupState?.enrichmentProcessStatus === "migrated_and_assigned" ? (
-            <span className="enrichment-status success">Process migrated &amp; assigned</span>
+            <span className="enrichment-status success">Process migrated</span>
           ) : setupState?.enrichmentProcessStatus === "assigned" ? (
             <span className="enrichment-status success">Process assigned to project</span>
           ) : setupState?.enrichmentProcessStatus === "migration_failed" ? (

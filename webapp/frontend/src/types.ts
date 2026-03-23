@@ -133,7 +133,7 @@ export interface SetupConfigState {
   sourceAdoProject?: string;
   sourceAdoProcessName?: string;
   hasSourceAdoPat: boolean;
-  enrichmentProcessStatus?: "found" | "migrated" | "not_checked" | "migration_failed" | "assigned" | "migrated_and_assigned";
+  enrichmentProcessStatus?: "found" | "migrated" | "not_checked" | "migration_failed" | "assigned" | "migrated_and_assigned" | "project_created";
 }
 
 export interface ValidateSetupResponse {
@@ -141,7 +141,7 @@ export interface ValidateSetupResponse {
   state: SetupConfigState;
   error?: string;
   enrichmentProcess?: {
-    status: "found" | "migrated" | "not_checked" | "migration_failed" | "assigned" | "migrated_and_assigned";
+    status: "found" | "migrated" | "not_checked" | "migration_failed" | "assigned" | "migrated_and_assigned" | "project_created";
     message?: string;
   };
 }

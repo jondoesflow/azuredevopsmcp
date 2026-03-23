@@ -129,7 +129,11 @@ function getAzureDevOpsUrl(org?: string, url?: string): string | undefined {
   return `https://dev.azure.com/${org}`;
 }
 
-async function validateAzureDevOpsConnection(url: string, project: string, pat: string): Promise<void> {
+async function validateAzureDevOpsConnection(
+  url: string,
+  project: string,
+  pat: string,
+): Promise<{ valid: true; projectExists: boolean }> {
   const authValue = Buffer.from(`:${pat}`).toString("base64");
   const response = await fetch(`${url}/_apis/projects?api-version=7.1-preview.4`, {
     headers: {
@@ -150,9 +154,7 @@ async function validateAzureDevOpsConnection(url: string, project: string, pat: 
   }
 
   const found = data.value?.some((entry) => entry.name?.toLowerCase() === project.toLowerCase());
-  if (!found) {
-    throw new Error(`Azure DevOps project '${project}' was not found for this connection.`);
-  }
+  return { valid: true, projectExists: !!found };
 }
 
 async function validateJiraConnection(baseUrl: string, project: string, token: string): Promise<void> {
@@ -256,9 +258,17 @@ export function createApiRouter(config: AppConfig) {
           res.status(400).json({ error: "Azure DevOps URL/org, project name, and PAT token are required." });
           return;
         }
-        await validateAzureDevOpsConnection(url, state.azureDevOpsProject, secrets.azureDevOpsPat);
+        const adoCheck = await validateAzureDevOpsConnection(url, state.azureDevOpsProject, secrets.azureDevOpsPat);
 
-        // Check and optionally migrate the enrichment process
+        if (!adoCheck.projectExists && !state.sourceAdoOrgUrl) {
+          res.status(400).json({
+            validated: false,
+            error: `Project "${state.azureDevOpsProject}" does not exist. Provide source ADO config to auto-create it with the Enrichment process.`,
+          });
+          return;
+        }
+
+        // Migrate enrichment process + create project if needed
         enrichmentResult = await checkAndMigrateEnrichmentProcess({
           targetOrgUrl: url,
           targetProject: state.azureDevOpsProject ?? "",
