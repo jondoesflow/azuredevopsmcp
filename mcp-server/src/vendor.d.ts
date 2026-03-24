@@ -9,15 +9,15 @@ declare module "mammoth" {
   export default { extractRawText, convertToHtml };
 }
 
-declare module "pdf-parse/lib/pdf-parse.js" {
-  interface PdfData {
-    numpages: number;
-    numrender: number;
-    info: Record<string, unknown>;
-    metadata: unknown;
-    text: string;
-    version: string;
+declare module "pdf-parse" {
+  interface PDFParseOptions {
+    verbosity?: number;
   }
-  function pdfParse(dataBuffer: Buffer): Promise<PdfData>;
-  export default pdfParse;
+  class PDFParse {
+    constructor(options: PDFParseOptions);
+    load(data: Buffer): Promise<void>;
+    getText(): Promise<string>;
+    destroy(): void;
+  }
+  export { PDFParse };
 }

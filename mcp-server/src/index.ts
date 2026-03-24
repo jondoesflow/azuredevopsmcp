@@ -14,7 +14,7 @@ import { JiraClient } from "./jiraClient.js";
 import { workItemTools, handleWorkItemTool, getFileStore } from "./tools/workItems.js";
 import { ensureEnrichmentProcess } from "./processMigration.js";
 import mammoth from "mammoth";
-import pdfParse from "pdf-parse/lib/pdf-parse.js";
+import { PDFParse } from "pdf-parse";
 
 const PORT = Number.parseInt(process.env.PORT || "80", 10);
 const TRANSPORT_MODE = process.env.TRANSPORT_MODE || "http"; // "http" or "stdio"
@@ -414,8 +414,9 @@ async function startHttpServer() {
       } else if (ext === "pdf") {
         // Extract text from PDF documents
         const rawBuffer = Buffer.from(fileContent, "base64");
-        const result = await pdfParse(rawBuffer);
-        content = result.text;
+        const parser = new PDFParse({});
+        await parser.load(rawBuffer);
+        content = await parser.getText();
         logger.info("Extracted text from .pdf", { fileName: safeFileName, textLength: content.length });
       } else if (["png", "jpg", "jpeg", "svg", "vsdx"].includes(ext)) {
         // Image/diagram files — store as reference with metadata note
