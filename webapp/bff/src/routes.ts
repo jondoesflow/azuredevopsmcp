@@ -6,6 +6,7 @@ import { AppConfig, AuthenticatedUser, ChatRequestBody, SetupConnectionInput } f
 import { McpClient } from "./mcpClient.js";
 import { SetupStore } from "./setupStore.js";
 import { checkAndMigrateEnrichmentProcess, EnrichmentCheckResult } from "./enrichmentCheck.js";
+import { addHistoryEntry, getHistoryForUser, clearHistoryForUser } from "./historyStore.js";
 
 const validateRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -85,8 +86,11 @@ function parseProcessBody(req: Request): { project?: string; analysisMode: "proc
   };
 }
 
-function isTextFile(fileName: string): boolean {
-  return fileName.toLowerCase().endsWith(".txt");
+const PROCESSABLE_EXTENSIONS = new Set(["txt", "docx", "pdf"]);
+
+function isProcessableFile(fileName: string): boolean {
+  const ext = fileName.toLowerCase().split(".").pop() ?? "";
+  return PROCESSABLE_EXTENSIONS.has(ext);
 }
 
 /**
@@ -343,10 +347,11 @@ export function createApiRouter(config: AppConfig) {
   });
 
   router.post("/files/upload", uploadRateLimit, async (req: Request, res: Response) => {
-    const { fileName, fileContent, contentType } = req.body as {
+    const { fileName, fileContent, contentType, documentType } = req.body as {
       fileName?: unknown;
       fileContent?: unknown;
       contentType?: unknown;
+      documentType?: unknown;
     };
 
     if (typeof fileName !== "string" || !fileName.trim() || typeof fileContent !== "string" || !fileContent.trim()) {
@@ -362,7 +367,19 @@ export function createApiRouter(config: AppConfig) {
 
     try {
       const mcpClient = createMcpClient(req);
-      const response = await mcpClient.uploadFile(safeFileName, fileContent, typeof contentType === "string" ? contentType : "text/plain");
+      const docTypeStr = typeof documentType === "string" ? documentType : undefined;
+      const response = await mcpClient.uploadFile(
+        safeFileName,
+        fileContent,
+        typeof contentType === "string" ? contentType : "text/plain",
+        docTypeStr,
+      );
+
+      const userId = getUserId(req);
+      if (userId) {
+        addHistoryEntry(userId, "upload", { fileName: safeFileName, documentType: docTypeStr }, { success: true, summary: `Uploaded '${safeFileName}'` });
+      }
+
       res.json(response);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to upload file";
@@ -408,26 +425,28 @@ export function createApiRouter(config: AppConfig) {
 
       const mcpClient = createMcpClient(req);
       const files = await mcpClient.listFiles();
-      const textFiles = files.files.filter((file) => isTextFile(file.fileName));
+      const processableFiles = files.files.filter((file) => isProcessableFile(file.fileName));
 
-      if (textFiles.length === 0) {
-        res.status(400).json({ error: "No .txt file found. Upload one .txt file first." });
+      if (processableFiles.length === 0) {
+        res.status(400).json({ error: "No processable files found. Upload .txt, .docx, or .pdf files first." });
         return;
       }
 
-      if (!processRequest.fileName && textFiles.length !== 1) {
-        res.status(400).json({ error: "Only one .txt file can be processed at a time. Delete extra files first." });
+      // Determine which file to use as the primary process/transcript file
+      const primaryFile = processRequest.fileName
+        ? processableFiles.find((file) => file.fileName === processRequest.fileName)
+        : processableFiles[0];
+
+      if (!primaryFile) {
+        res.status(400).json({ error: "Selected file must be an uploaded .txt, .docx, or .pdf file." });
         return;
       }
 
-      const fileName = processRequest.fileName
-        ? textFiles.find((file) => file.fileName === processRequest.fileName)?.fileName
-        : textFiles[0]?.fileName;
+      const fileName = primaryFile.fileName;
 
-      if (!fileName) {
-        res.status(400).json({ error: "Selected file must be a .txt file already uploaded to the MCP server." });
-        return;
-      }
+      // Determine analysis mode from document type if available
+      const docType = (primaryFile as { documentType?: string }).documentType;
+      const effectiveAnalysisMode = docType === "to-be-process" ? "process" : docType === "transcript" ? "themes" : processRequest.analysisMode;
 
       // For Azure DevOps, ensure the enrichment process exists before creating backlog items
       let enrichmentResult: EnrichmentCheckResult | undefined;
@@ -449,31 +468,125 @@ export function createApiRouter(config: AppConfig) {
         }
       }
 
-      const [analysis, review, backlog] = await mcpClient.executeToolsSequential([
-        { toolName: "analyse_document", args: { fileName, analysisMode: processRequest.analysisMode } },
-        { toolName: "preview_backlog", args: { processFileName: fileName, fileName, storyMaturity: "placeholder" } },
-        { toolName: "create_backlog", args: { processFileName: fileName, project: effectiveProject, storyMaturity: "placeholder" } },
-      ]);
+      // Analyse all processable files, then create backlog from primary
+      const toolCalls: Array<{ toolName: string; args: Record<string, unknown> }> = [];
+
+      // Analyse each processable file with its document-type-derived mode
+      for (const file of processableFiles) {
+        const fileDocType = (file as { documentType?: string }).documentType;
+        const fileAnalysisMode = fileDocType === "to-be-process" ? "process" : fileDocType === "transcript" ? "themes" : effectiveAnalysisMode;
+        toolCalls.push({ toolName: "analyse_document", args: { fileName: file.fileName, analysisMode: fileAnalysisMode } });
+      }
+
+      // Preview and create backlog from primary file
+      toolCalls.push({ toolName: "preview_backlog", args: { processFileName: fileName, fileName, storyMaturity: "placeholder" } });
+      toolCalls.push({ toolName: "create_backlog", args: { processFileName: fileName, project: effectiveProject, storyMaturity: "placeholder" } });
+
+      const results = await mcpClient.executeToolsSequential(toolCalls);
+      const analysis = results[0];
+      const review = results[results.length - 2];
+      const backlog = results[results.length - 1];
 
       const boardUrl = setupState.platform === "jira"
         ? `${setupState.jiraBaseUrl?.replace(/\/+$/, "")}/jira/software/c/projects/${encodeURIComponent(effectiveProject)}/boards`
         : `${getAzureDevOpsUrl(setupState.azureDevOpsOrg, setupState.azureDevOpsUrl)}/${encodeURIComponent(effectiveProject)}/_backlogs/backlog`;
 
+      const executedTools = toolCalls.map((call) => call.toolName);
+
+      if (userId) {
+        const backlogResult = backlog as Record<string, unknown> | undefined;
+        const itemCount = typeof backlogResult?.userStories === "number" ? backlogResult.userStories : undefined;
+        addHistoryEntry(userId, "create_backlog", {
+          fileNames: processableFiles.map((f) => f.fileName),
+          project: effectiveProject,
+        }, {
+          success: true,
+          summary: `Backlog created: ${itemCount ?? "?"} stories for project '${effectiveProject}'`,
+          boardUrl,
+          itemCount: itemCount as number | undefined,
+        });
+      }
+
       res.json({
-        reply: `Document '${fileName}' processed and backlog creation executed for project '${effectiveProject}'.`,
+        reply: `${processableFiles.length} document(s) processed and backlog created for project '${effectiveProject}'.`,
         data: {
-          executedTools: ["analyse_document", "preview_backlog", "create_backlog"],
+          executedTools,
           platform: setupState.platform,
           project: effectiveProject,
           boardUrl,
           review,
           analysis,
           backlog,
+          filesProcessed: processableFiles.map((f) => f.fileName),
           ...(enrichmentResult ? { enrichmentProcess: enrichmentResult } : {}),
         },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to process document";
+      res.status(502).json({ error: message });
+    }
+  });
+
+  router.get("/history", (req: Request, res: Response) => {
+    const userId = getUserId(req);
+    if (!userId) {
+      res.json({ entries: [] });
+      return;
+    }
+    res.json({ entries: getHistoryForUser(userId) });
+  });
+
+  router.delete("/history", (req: Request, res: Response) => {
+    const userId = getUserId(req);
+    if (!userId) {
+      res.json({ deleted: 0 });
+      return;
+    }
+    const deleted = clearHistoryForUser(userId);
+    res.json({ deleted });
+  });
+
+  router.post("/process/personas", processRateLimit, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const setupState = setupStore.getState(userId);
+      const secrets = setupStore.getSecrets(userId);
+      const hasConfiguredConnection = setupState.platform === "jira"
+        ? Boolean(setupState.jiraBaseUrl && setupState.jiraProject && secrets.jiraApiToken)
+        : Boolean((setupState.azureDevOpsOrg || setupState.azureDevOpsUrl) && setupState.azureDevOpsProject && secrets.azureDevOpsPat);
+
+      if (!setupState.isValidated && !hasConfiguredConnection) {
+        res.status(400).json({ error: "Connection must be validated before creating personas." });
+        return;
+      }
+
+      const effectiveProject = (setupState.platform === "jira" ? setupState.jiraProject : setupState.azureDevOpsProject) ?? "";
+      if (!effectiveProject) {
+        res.status(400).json({ error: "Project is required. Validate your platform connection first." });
+        return;
+      }
+
+      const mcpClient = createMcpClient(req);
+      const result = await mcpClient.executeTool("create_personas", {
+        project: effectiveProject,
+        targetSystem: setupState.platform === "jira" ? "jira" : "azuredevops",
+      });
+
+      if (userId) {
+        const personaResult = result as Record<string, unknown> | undefined;
+        addHistoryEntry(userId, "create_personas", { project: effectiveProject }, {
+          success: true,
+          summary: `Created ${personaResult?.personaCount ?? "?"} persona(s) for project '${effectiveProject}'`,
+          personaCount: typeof personaResult?.personaCount === "number" ? personaResult.personaCount : undefined,
+        });
+      }
+
+      res.json({
+        reply: `Personas created for project '${effectiveProject}'.`,
+        data: { executedTools: ["create_personas"], result },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to create personas";
       res.status(502).json({ error: message });
     }
   });

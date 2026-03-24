@@ -20,6 +20,7 @@ interface FileSummary {
   size: number;
   mimeType: string;
   uploadedAt: string;
+  documentType?: "transcript" | "to-be-process" | "reference";
 }
 
 export class McpClient {
@@ -162,11 +163,11 @@ export class McpClient {
     }
   }
 
-  async uploadFile(fileName: string, fileContent: string, contentType: string): Promise<unknown> {
+  async uploadFile(fileName: string, fileContent: string, contentType: string, documentType?: string): Promise<unknown> {
     const response = await fetch(`${this.baseUrl}/upload`, {
       method: "POST",
       headers: this.buildHeaders(),
-      body: JSON.stringify({ fileName, fileContent, contentType }),
+      body: JSON.stringify({ fileName, fileContent, contentType, ...(documentType ? { documentType } : {}) }),
     });
 
     if (!response.ok) {

@@ -13,6 +13,8 @@ import { AzureDevOpsClient } from "./azureDevOpsClient.js";
 import { JiraClient } from "./jiraClient.js";
 import { workItemTools, handleWorkItemTool, getFileStore } from "./tools/workItems.js";
 import { ensureEnrichmentProcess } from "./processMigration.js";
+import mammoth from "mammoth";
+import pdfParse from "pdf-parse/lib/pdf-parse.js";
 
 const PORT = Number.parseInt(process.env.PORT || "80", 10);
 const TRANSPORT_MODE = process.env.TRANSPORT_MODE || "http"; // "http" or "stdio"
@@ -378,9 +380,9 @@ async function startHttpServer() {
   });
 
   // File upload endpoint (REST, not MCP) - accepts JSON body with fileName and fileContent
-  app.post("/upload", apiKeyAuth, uploadRateLimit, express.json({ limit: "50mb" }), (req: Request, res: Response) => {
+  app.post("/upload", apiKeyAuth, uploadRateLimit, express.json({ limit: "50mb" }), async (req: Request, res: Response) => {
     try {
-      const { fileName, fileContent, contentType } = req.body;
+      const { fileName, fileContent, contentType, documentType } = req.body;
 
       if (!fileName || !fileContent) {
         res.status(400).json({ error: "fileName and fileContent are required" });
@@ -393,14 +395,41 @@ async function startHttpServer() {
         return;
       }
 
-      logger.info("Upload received", { fileName: safeFileName, contentLength: fileContent.length });
+      const docType: "transcript" | "to-be-process" | "reference" =
+        documentType === "transcript" || documentType === "to-be-process" || documentType === "reference"
+          ? documentType
+          : "transcript";
 
-      const extracted = extractNestedContent(fileContent, safeFileName);
-      const { content, error } = decodeUploadContent(extracted, safeFileName);
+      logger.info("Upload received", { fileName: safeFileName, contentLength: fileContent.length, documentType: docType });
 
-      if (error) {
-        res.status(400).json({ error });
-        return;
+      const ext = safeFileName.toLowerCase().split(".").pop() ?? "";
+      let content: string;
+
+      if (ext === "docx") {
+        // Extract text from Word documents using mammoth
+        const rawBuffer = Buffer.from(fileContent, "base64");
+        const result = await mammoth.extractRawText({ buffer: rawBuffer });
+        content = result.value;
+        logger.info("Extracted text from .docx", { fileName: safeFileName, textLength: content.length });
+      } else if (ext === "pdf") {
+        // Extract text from PDF documents
+        const rawBuffer = Buffer.from(fileContent, "base64");
+        const result = await pdfParse(rawBuffer);
+        content = result.text;
+        logger.info("Extracted text from .pdf", { fileName: safeFileName, textLength: content.length });
+      } else if (["png", "jpg", "jpeg", "svg", "vsdx"].includes(ext)) {
+        // Image/diagram files — store as reference with metadata note
+        content = `[Binary file: ${safeFileName} (${ext.toUpperCase()} ${Math.round(fileContent.length * 0.75 / 1024)}KB)]`;
+        logger.info("Stored reference file", { fileName: safeFileName, ext });
+      } else {
+        // Text files — existing logic
+        const extracted = extractNestedContent(fileContent, safeFileName);
+        const decoded = decodeUploadContent(extracted, safeFileName);
+        if (decoded.error) {
+          res.status(400).json({ error: decoded.error });
+          return;
+        }
+        content = decoded.content;
       }
 
       const fileStore = getFileStore();
@@ -409,10 +438,11 @@ async function startHttpServer() {
         content,
         mimeType: contentType || "text/plain",
         uploadedAt: new Date(),
+        documentType: docType,
       });
 
-      logger.info("File uploaded via REST", { fileName: safeFileName, size: content.length });
-      res.json({ result: "success", fileName: safeFileName, size: content.length, contentType: contentType || "text/plain" });
+      logger.info("File uploaded via REST", { fileName: safeFileName, size: content.length, documentType: docType });
+      res.json({ result: "success", fileName: safeFileName, size: content.length, contentType: contentType || "text/plain", documentType: docType });
     } catch (error) {
       logger.error("Error handling file upload", error);
       res.status(500).json({ error: "Upload failed" });
@@ -422,12 +452,15 @@ async function startHttpServer() {
   // List uploaded files endpoint (REST)
   app.get("/files", apiKeyAuth, (_req: Request, res: Response) => {
     const fileStore = getFileStore();
-    const files = Array.from(fileStore.entries()).map(([key, val]) => ({
-      fileName: val.name,
-      size: val.content.length,
-      mimeType: val.mimeType,
-      uploadedAt: val.uploadedAt.toISOString(),
-    }));
+    const files = Array.from(fileStore.entries())
+      .filter(([key]) => !key.startsWith("__"))
+      .map(([key, val]) => ({
+        fileName: val.name,
+        size: val.content.length,
+        mimeType: val.mimeType,
+        uploadedAt: val.uploadedAt.toISOString(),
+        documentType: val.documentType ?? "transcript",
+      }));
     res.json({ count: files.length, files });
   });
 

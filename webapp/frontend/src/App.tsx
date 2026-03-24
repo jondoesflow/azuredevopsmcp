@@ -2,8 +2,11 @@ import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { InteractionRequiredAuthError } from "@azure/msal-browser";
 import { useMsal } from "@azure/msal-react";
 import {
+  clearHistory,
+  createPersonas,
   deleteAllFiles,
   getFiles,
+  getHistory,
   getRandomFact,
   getSetupConfig,
   processDocument,
@@ -11,7 +14,7 @@ import {
   uploadFile,
   validateSetupConfig,
 } from "./api";
-import { BacklogReviewResult, SetupConfigPayload, SetupConfigState, UploadedFile } from "./types";
+import { BacklogReviewResult, DocumentType, HistoryEntry, SetupConfigPayload, SetupConfigState, UploadedFile } from "./types";
 
 const bffScope = import.meta.env.VITE_BFF_SCOPE as string;
 type LoadingAction =
@@ -22,7 +25,8 @@ type LoadingAction =
   | "upload"
   | "refresh"
   | "delete-all"
-  | "create-backlog";
+  | "create-backlog"
+  | "create-personas";
 
 interface EnrichmentFieldDoc {
   displayName: string;
@@ -190,8 +194,8 @@ export function App() {
   const [sourceAdoPat, setSourceAdoPat] = useState("");
   const [showSourceAdoFields, setShowSourceAdoFields] = useState(false);
 
-  const [analysisMode, setAnalysisMode] = useState<"process" | "themes">("process");
   const [files, setFiles] = useState<UploadedFile[]>([]);
+  const [pendingDocType, setPendingDocType] = useState<DocumentType>("to-be-process");
   const [busy, setBusy] = useState(false);
   const [actionLoading, setActionLoading] = useState<LoadingAction | null>(null);
   const [spinnerFrame, setSpinnerFrame] = useState(0);
@@ -200,6 +204,8 @@ export function App() {
   const [resultSummary, setResultSummary] = useState<Record<string, number> | null>(null);
   const [review, setReview] = useState<BacklogReviewResult | null>(null);
   const [showEnrichmentFieldsPage, setShowEnrichmentFieldsPage] = useState(false);
+  const [showHistoryPage, setShowHistoryPage] = useState(false);
+  const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [terminalLines, setTerminalLines] = useState<string[]>([
@@ -457,29 +463,38 @@ export function App() {
   }
 
   async function onUpload(event: ChangeEvent<HTMLInputElement>): Promise<void> {
-    const file = event.target.files?.[0];
-    if (!file) return;
+    const selectedFiles = event.target.files;
+    if (!selectedFiles || selectedFiles.length === 0) return;
 
-    if (!file.name.toLowerCase().endsWith(".txt")) {
-      setError("Only .txt files are supported for processing.");
-      logLine(`Rejected upload for '${file.name}' (only .txt allowed).`);
-      event.target.value = "";
-      return;
-    }
+    const ALLOWED_EXTENSIONS = new Set(["txt", "docx", "pdf", "png", "jpg", "jpeg", "svg", "vsdx"]);
 
     setError(null);
     setActionLoading("upload");
     setBusy(true);
-    logLine(`Uploading '${file.name}' to MCP server...`);
 
     try {
       const token = await getAccessToken();
-      await uploadFile(token, file);
+
+      for (const file of Array.from(selectedFiles)) {
+        const ext = file.name.toLowerCase().split(".").pop() ?? "";
+        if (!ALLOWED_EXTENSIONS.has(ext)) {
+          logLine(`Skipped '${file.name}' (unsupported file type).`);
+          continue;
+        }
+
+        // Image/diagram files default to "reference"
+        const isImage = ["png", "jpg", "jpeg", "svg", "vsdx"].includes(ext);
+        const docType: DocumentType = isImage ? "reference" : pendingDocType;
+
+        logLine(`Uploading '${file.name}' as ${docType}...`);
+        await uploadFile(token, file, docType);
+        logLine(`Upload completed for '${file.name}'.`);
+      }
+
       await refreshFiles(token, false);
-      setStatus(`Uploaded '${file.name}'.`);
-      logLine(`Upload completed for '${file.name}'.`);
+      setStatus(`Uploaded ${selectedFiles.length} file(s).`);
     } catch (error) {
-      logLine(`Upload failed for '${file.name}'.`);
+      logLine("Upload failed.");
       setError(error instanceof Error ? error.message : "Upload failed");
     } finally {
       setBusy(false);
@@ -625,10 +640,9 @@ export function App() {
   }
 
   async function processUploadedDocument(): Promise<void> {
-    const selectedFileName = files[0]?.fileName;
-    if (!selectedFileName) {
-      setError("Upload a file first.");
-      logLine("Process blocked: upload one .txt file first.");
+    if (files.length === 0) {
+      setError("Upload at least one document first.");
+      logLine("Process blocked: no uploaded files.");
       return;
     }
     if (!configuredProject) {
@@ -644,7 +658,7 @@ export function App() {
     setBoardUrl(null);
     setResultSummary(null);
     setReview(null);
-    logLine(`Processing '${selectedFileName}' with analysis mode '${analysisMode}'...`);
+    logLine(`Processing ${files.length} document(s)...`);
     logLine("Executing MCP tools: analyse_document -> preview_backlog -> create_backlog...");
 
     try {
@@ -659,8 +673,7 @@ export function App() {
       await startProgressVisuals(token);
       const response = await processDocument(token, {
         project: configuredProject,
-        analysisMode,
-        fileName: selectedFileName,
+        analysisMode: "process",
       });
 
       setStatus(response.reply);
@@ -673,7 +686,8 @@ export function App() {
         : {};
       setResultSummary(Object.keys(summary).length > 0 ? (summary as Record<string, number>) : null);
 
-      logLine("MCP tools executed via process route: analyse_document, preview_backlog, create_backlog.");
+      const toolList = response.data?.executedTools?.join(", ") ?? "analyse_document, preview_backlog, create_backlog";
+      logLine(`MCP tools executed: ${toolList}`);
       logLine("Document processing completed.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Document processing failed";
@@ -686,6 +700,113 @@ export function App() {
       setBusy(false);
       setActionLoading((current) => (current === "create-backlog" ? null : current));
     }
+  }
+
+  async function processPersonas(): Promise<void> {
+    if (files.length === 0) {
+      setError("Upload at least one document first.");
+      return;
+    }
+    if (!configuredProject) {
+      setError("Project is required from your validated configuration.");
+      return;
+    }
+
+    setError(null);
+    setStatus(null);
+    setActionLoading("create-personas");
+    setBusy(true);
+    logLine("Identifying personas from uploaded documents...");
+
+    try {
+      const token = await getAccessToken();
+      const response = await createPersonas(token);
+      setStatus(response.reply);
+      logLine("Persona creation completed.");
+
+      const personaData = response.data as { result?: { personas?: Array<{ name: string }> } } | undefined;
+      const personaNames = personaData?.result?.personas?.map((p) => p.name) ?? [];
+      if (personaNames.length > 0) {
+        logLine(`Personas identified: ${personaNames.join(", ")}`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Persona creation failed";
+      logLine(`Persona creation failed: ${message}`);
+      setError(message);
+    } finally {
+      setBusy(false);
+      setActionLoading((current) => (current === "create-personas" ? null : current));
+    }
+  }
+
+  async function loadHistory(): Promise<void> {
+    try {
+      const token = await getAccessToken();
+      const result = await getHistory(token);
+      setHistoryEntries(result.entries);
+    } catch {
+      setHistoryEntries([]);
+    }
+  }
+
+  async function handleClearHistory(): Promise<void> {
+    try {
+      const token = await getAccessToken();
+      await clearHistory(token);
+      setHistoryEntries([]);
+      logLine("History cleared.");
+    } catch {
+      setError("Failed to clear history.");
+    }
+  }
+
+  function renderHistoryPage(): JSX.Element {
+    const actionLabels: Record<string, string> = {
+      upload: "Upload",
+      analyse_document: "Analyse Document",
+      preview_backlog: "Preview Backlog",
+      create_backlog: "Create Backlog",
+      create_personas: "Create Personas",
+    };
+
+    return (
+      <main className="fields-layout">
+        <section className="panel fields-panel">
+          <h2>History</h2>
+          <p>Your recent uploads, tool calls, and results.</p>
+          <button onClick={handleClearHistory}>Clear History</button>
+
+          {historyEntries.length === 0 ? (
+            <p>No history yet.</p>
+          ) : (
+            <div className="fields-table-wrap" role="region" aria-label="User history">
+              <table className="fields-table">
+                <thead>
+                  <tr>
+                    <th>Date/Time</th>
+                    <th>Action</th>
+                    <th>Document(s)</th>
+                    <th>Project</th>
+                    <th>Result</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historyEntries.map((entry) => (
+                    <tr key={entry.id}>
+                      <td>{new Date(entry.timestamp).toLocaleString()}</td>
+                      <td>{actionLabels[entry.action] ?? entry.action}</td>
+                      <td>{entry.inputs.fileName ?? entry.inputs.fileNames?.join(", ") ?? "-"}</td>
+                      <td>{entry.inputs.project ?? "-"}</td>
+                      <td>{entry.outputs.summary}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </main>
+    );
   }
 
   function renderConnectionFields(): JSX.Element {
@@ -839,13 +960,21 @@ export function App() {
           <button onClick={() => setShowEnrichmentFieldsPage((current) => !current)}>
             {showEnrichmentFieldsPage ? "Back to assistant" : "Enrichment fields"}
           </button>
+          <button onClick={async () => {
+            const next = !showHistoryPage;
+            setShowHistoryPage(next);
+            setShowEnrichmentFieldsPage(false);
+            if (next) await loadHistory();
+          }}>
+            {showHistoryPage ? "Back to assistant" : "History"}
+          </button>
           <button onClick={() => setShowConfigModal(true)}>Configuration</button>
           <button onClick={signOut}>Sign out</button>
           {renderInlineSpinner("sign-out", "Signing out...")}
         </div>
       </header>
 
-      {showEnrichmentFieldsPage ? renderEnrichmentFieldsPage() : !connectionReady ? (
+      {showHistoryPage ? renderHistoryPage() : showEnrichmentFieldsPage ? renderEnrichmentFieldsPage() : !connectionReady ? (
         <main className="wizard-layout">
           <section className="panel control-panel">
             <h2>Step 1: Choose platform</h2>
@@ -888,25 +1017,27 @@ export function App() {
             <p>Connected platform: <strong>{activePlatform === "jira" ? "Jira" : "Azure DevOps"}</strong></p>
             <p>Project: <strong>{configuredProject || "(from validated setup)"}</strong></p>
 
+            <label>
+              Document type for upload
+              <select value={pendingDocType} onChange={(event) => setPendingDocType(event.target.value as DocumentType)} disabled={busy}>
+                <option value="to-be-process">To-Be Process</option>
+                <option value="transcript">Transcript</option>
+                <option value="reference">Reference / Diagram</option>
+              </select>
+            </label>
             <label className="upload">
-              Upload transcript / to-be process file (.txt)
-              <input type="file" accept=".txt,text/plain" onChange={onUpload} disabled={busy} />
+              Upload documents (.txt, .docx, .pdf, images)
+              <input type="file" accept=".txt,.docx,.pdf,.png,.jpg,.jpeg,.svg,.vsdx" multiple onChange={onUpload} disabled={busy} />
             </label>
             {renderInlineSpinner("upload", "Uploading file...")}
 
-            <label>
-              Analysis mode
-              <select value={analysisMode} onChange={(event) => setAnalysisMode(event.target.value as "process" | "themes")} disabled={busy}>
-                <option value="process">to-be process</option>
-                <option value="themes">transcript</option>
-              </select>
-            </label>
-
             <button disabled={busy} onClick={processUploadedDocument}>Create Backlog</button>
+            <button disabled={busy} onClick={processPersonas}>Create Personas</button>
             <button disabled={busy} onClick={deleteAllUploadedFiles}>Delete all uploaded files</button>
             <button disabled={busy} onClick={() => void refreshFiles()}>Refresh files</button>
             <div className="inline-action-row">
               {renderInlineSpinner("create-backlog", "Creating backlog...")}
+              {renderInlineSpinner("create-personas", "Identifying personas...")}
               {renderInlineSpinner("delete-all", "Deleting uploaded files...")}
               {renderInlineSpinner("refresh", "Refreshing file list...")}
             </div>
@@ -915,6 +1046,9 @@ export function App() {
               {files.map((file) => (
                 <li key={file.fileName}>
                   <strong>{file.fileName}</strong>
+                  <span className={`doc-type-badge ${file.documentType ?? "transcript"}`}>
+                    {file.documentType === "to-be-process" ? "To-Be Process" : file.documentType === "reference" ? "Reference" : "Transcript"}
+                  </span>
                   <span>{file.size} bytes</span>
                 </li>
               ))}
@@ -934,25 +1068,27 @@ export function App() {
             <p>Connected platform: <strong>{activePlatform === "jira" ? "Jira" : "Azure DevOps"}</strong></p>
             <p>Project: <strong>{configuredProject}</strong></p>
 
+            <label>
+              Document type for upload
+              <select value={pendingDocType} onChange={(event) => setPendingDocType(event.target.value as DocumentType)} disabled={busy}>
+                <option value="to-be-process">To-Be Process</option>
+                <option value="transcript">Transcript</option>
+                <option value="reference">Reference / Diagram</option>
+              </select>
+            </label>
             <label className="upload">
-              Upload transcript / to-be process file (.txt)
-              <input type="file" accept=".txt,text/plain" onChange={onUpload} disabled={busy} />
+              Upload documents (.txt, .docx, .pdf, images)
+              <input type="file" accept=".txt,.docx,.pdf,.png,.jpg,.jpeg,.svg,.vsdx" multiple onChange={onUpload} disabled={busy} />
             </label>
             {renderInlineSpinner("upload", "Uploading file...")}
 
-            <label>
-              Analysis mode
-              <select value={analysisMode} onChange={(event) => setAnalysisMode(event.target.value as "process" | "themes")} disabled={busy}>
-                <option value="process">to-be process</option>
-                <option value="themes">transcript</option>
-              </select>
-            </label>
-
             <button disabled={busy} onClick={processUploadedDocument}>Create Backlog</button>
+            <button disabled={busy} onClick={processPersonas}>Create Personas</button>
             <button disabled={busy} onClick={deleteAllUploadedFiles}>Delete all uploaded files</button>
             <button disabled={busy} onClick={() => void refreshFiles()}>Refresh files</button>
             <div className="inline-action-row">
               {renderInlineSpinner("create-backlog", "Creating backlog...")}
+              {renderInlineSpinner("create-personas", "Identifying personas...")}
               {renderInlineSpinner("delete-all", "Deleting uploaded files...")}
               {renderInlineSpinner("refresh", "Refreshing file list...")}
             </div>
@@ -961,6 +1097,9 @@ export function App() {
               {files.map((file) => (
                 <li key={file.fileName}>
                   <strong>{file.fileName}</strong>
+                  <span className={`doc-type-badge ${file.documentType ?? "transcript"}`}>
+                    {file.documentType === "to-be-process" ? "To-Be Process" : file.documentType === "reference" ? "Reference" : "Transcript"}
+                  </span>
                   <span>{file.size} bytes</span>
                 </li>
               ))}

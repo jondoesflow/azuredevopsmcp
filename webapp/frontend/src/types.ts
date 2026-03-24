@@ -85,11 +85,14 @@ export interface BacklogReviewResult {
   items: EnrichedWorkItem[];
 }
 
+export type DocumentType = "transcript" | "to-be-process" | "reference";
+
 export interface UploadedFile {
   fileName: string;
   size: number;
   mimeType: string;
   uploadedAt: string;
+  documentType?: DocumentType;
 }
 
 export interface FileListResponse {
@@ -102,6 +105,28 @@ export interface UploadResponse {
   fileName: string;
   size: number;
   contentType: string;
+}
+
+export interface HistoryEntry {
+  id: string;
+  userId: string;
+  timestamp: string;
+  action: "upload" | "analyse_document" | "preview_backlog" | "create_backlog" | "create_personas";
+  inputs: {
+    fileName?: string;
+    fileNames?: string[];
+    documentType?: string;
+    analysisMode?: string;
+    project?: string;
+  };
+  outputs: {
+    success: boolean;
+    summary: string;
+    boardUrl?: string;
+    itemCount?: number;
+    skippedCount?: number;
+    personaCount?: number;
+  };
 }
 
 export interface SetupConfigPayload {

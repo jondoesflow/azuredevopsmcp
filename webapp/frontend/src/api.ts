@@ -1,6 +1,8 @@
 import {
   ChatResponse,
+  DocumentType,
   FileListResponse,
+  HistoryEntry,
   ProcessResultData,
   SetupConfigPayload,
   SetupConfigState,
@@ -64,7 +66,7 @@ export async function deleteAllFiles(token: string): Promise<{ deleted: number }
   });
 }
 
-export async function uploadFile(token: string, file: File): Promise<UploadResponse> {
+export async function uploadFile(token: string, file: File, documentType?: DocumentType): Promise<UploadResponse> {
   const fileContent = await toBase64(file);
   return request<UploadResponse>("/files/upload", token, {
     method: "POST",
@@ -72,6 +74,7 @@ export async function uploadFile(token: string, file: File): Promise<UploadRespo
       fileName: file.name,
       fileContent,
       contentType: file.type || "application/octet-stream",
+      ...(documentType ? { documentType } : {}),
     }),
   });
 }
@@ -93,6 +96,21 @@ export async function validateSetupConfig(token: string, payload: SetupConfigPay
   return request<ValidateSetupResponse>("/setup/validate", token, {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function getHistory(token: string): Promise<{ entries: HistoryEntry[] }> {
+  return request<{ entries: HistoryEntry[] }>("/history", token, { method: "GET" });
+}
+
+export async function clearHistory(token: string): Promise<{ deleted: number }> {
+  return request<{ deleted: number }>("/history", token, { method: "DELETE" });
+}
+
+export async function createPersonas(token: string): Promise<ChatResponse> {
+  return request<ChatResponse>("/process/personas", token, {
+    method: "POST",
+    body: "{}",
   });
 }
 

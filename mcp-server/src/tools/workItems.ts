@@ -542,7 +542,7 @@ export interface Tool {
 }
 
 // In-memory store for uploaded file content (keyed by filename)
-const fileStore: Map<string, { name: string; content: string; mimeType?: string; uploadedAt: Date }> = new Map();
+const fileStore: Map<string, { name: string; content: string; mimeType?: string; uploadedAt: Date; documentType?: "transcript" | "to-be-process" | "reference" }> = new Map();
 
 // Server-side chunk size for reading files (15K chars per chunk)
 const FILE_CHUNK_SIZE = 15000;
@@ -1141,6 +1141,35 @@ export const workItemTools: Tool[] = [
     },
   },
   {
+    name: "create_personas",
+    description:
+      "Analyses uploaded documents to identify user personas and creates a standalone Personas epic " +
+      "with detailed persona work items including pain points, challenges, and wants/needs.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        targetSystem: {
+          type: "string",
+          description: "Target system: 'azuredevops' (default) or 'jira'.",
+        },
+        project: {
+          type: "string",
+          description: "Target project name (Azure DevOps) or project key (Jira).",
+        },
+        fileNames: {
+          type: "array",
+          items: { type: "string" },
+          description: "Specific files to analyse for personas. If omitted, all uploaded files are used.",
+        },
+        areaPath: {
+          type: "string",
+          description: "Optional area path for Azure DevOps work items.",
+        },
+      },
+      required: ["project"],
+    },
+  },
+  {
     name: "migrate_process",
     description:
       "Ensures the Enrichment process exists in the target org (migrating from source if needed), " +
@@ -1221,6 +1250,7 @@ interface ToolInput {
   includePreview?: boolean;
   previewFileName?: string;
   reviewOnly?: boolean;
+  fileNames?: string[];
   // migrate_process fields
   sourceOrgUrl?: string;
   sourceProject?: string;
@@ -1739,6 +1769,329 @@ function getBestPersona(role: string | undefined, fallbackContent: string): stri
   return detectPersonaFromTranscript(fallbackContent);
 }
 
+interface PersonaProfile {
+  name: string;
+  painPoints: string[];
+  challenges: string[];
+  wantsNeeds: string[];
+}
+
+const PAIN_KEYWORDS = ["pain", "frustrat", "difficult", "struggle", "problem", "issue", "blocker", "bottleneck", "complaint"];
+const CHALLENGE_KEYWORDS = ["complex", "manual", "time-consuming", "error-prone", "workaround", "inefficien", "lack of", "limited"];
+const WANTS_KEYWORDS = ["want", "need", "require", "would like", "should be able", "must have", "expect", "prefer", "wish", "desire"];
+
+function extractSentences(content: string): string[] {
+  return content
+    .split(/[.!?\n]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 15 && s.length < 500);
+}
+
+function matchesSentence(sentence: string, keywords: string[]): boolean {
+  const lower = sentence.toLowerCase();
+  return keywords.some((kw) => lower.includes(kw));
+}
+
+function detectAllPersonas(contents: string[]): PersonaProfile[] {
+  const combined = contents.join("\n\n");
+  const lower = combined.toLowerCase();
+  const sentences = extractSentences(combined);
+
+  const personaKeywords = [
+    { persona: "salesperson", keywords: ["sales", "quote", "quotation", "customer proposal", "deal", "pipeline"] },
+    { persona: "field engineer", keywords: ["field", "site visit", "technician", "engineer", "on-site"] },
+    { persona: "project manager", keywords: ["project manager", "delivery plan", "milestone", "programme", "timeline"] },
+    { persona: "dispatcher", keywords: ["dispatch", "schedule", "routing", "allocate jobs", "assignment"] },
+    { persona: "finance analyst", keywords: ["invoice", "billing", "cost", "margin", "revenue", "budget"] },
+    { persona: "operations manager", keywords: ["operations", "kpi", "reporting", "dashboard", "performance"] },
+    { persona: "customer service representative", keywords: ["customer service", "support ticket", "helpdesk", "complaint", "resolution"] },
+    { persona: "warehouse operative", keywords: ["warehouse", "stock", "inventory", "picking", "packing"] },
+  ];
+
+  // Also detect explicit "as a <persona>" patterns
+  const explicitMatches = [...combined.matchAll(/as an?\s+([a-z][a-z\s-]{2,40})(?:[,.]|\s+i\s+need|\s+i\s+want)/gi)];
+  const explicitPersonas = explicitMatches
+    .map((m) => m[1].trim().toLowerCase())
+    .filter((p) => p !== "user");
+
+  const detectedNames = new Set<string>();
+
+  for (const candidate of personaKeywords) {
+    const score = candidate.keywords.reduce((acc, keyword) => acc + (lower.includes(keyword) ? 1 : 0), 0);
+    if (score >= 2) {
+      detectedNames.add(candidate.persona);
+    }
+  }
+
+  for (const explicit of explicitPersonas) {
+    detectedNames.add(explicit);
+  }
+
+  if (detectedNames.size === 0) {
+    detectedNames.add("user");
+  }
+
+  const profiles: PersonaProfile[] = [];
+  for (const name of detectedNames) {
+    // Find sentences that mention this persona or its context
+    const personaTerms = personaKeywords.find((p) => p.persona === name)?.keywords ?? [name];
+    const relevantSentences = sentences.filter((s) => {
+      const sl = s.toLowerCase();
+      return personaTerms.some((t) => sl.includes(t));
+    });
+
+    // Also consider all sentences if persona is generic
+    const searchPool = relevantSentences.length > 3 ? relevantSentences : sentences;
+
+    const painPoints = [...new Set(
+      searchPool.filter((s) => matchesSentence(s, PAIN_KEYWORDS)).slice(0, 5).map((s) => truncate(s, 250))
+    )];
+    const challenges = [...new Set(
+      searchPool.filter((s) => matchesSentence(s, CHALLENGE_KEYWORDS)).slice(0, 5).map((s) => truncate(s, 250))
+    )];
+    const wantsNeeds = [...new Set(
+      searchPool.filter((s) => matchesSentence(s, WANTS_KEYWORDS)).slice(0, 5).map((s) => truncate(s, 250))
+    )];
+
+    profiles.push({ name, painPoints, challenges, wantsNeeds });
+  }
+
+  return profiles;
+}
+
+async function handleCreatePersonas(client: AzureDevOpsClient, input: ToolInput): Promise<string> {
+  const store = getFileStore();
+  const project = input.project;
+  const iterationPath = `${project}\\Backlog`;
+  const areaPath = input.areaPath || project;
+
+  // Gather content from all uploaded files (or specified fileNames)
+  const contents: string[] = [];
+  if (input.fileNames && input.fileNames.length > 0) {
+    for (const fn of input.fileNames) {
+      const file = store.get(fn);
+      if (file) contents.push(file.content);
+    }
+  } else {
+    for (const [key, file] of store.entries()) {
+      if (!key.startsWith("__")) {
+        contents.push(file.content);
+      }
+    }
+  }
+
+  if (contents.length === 0) {
+    return JSON.stringify({ result: "error", message: "No uploaded files found. Upload documents first." });
+  }
+
+  const personas = detectAllPersonas(contents);
+  if (personas.length === 0) {
+    return JSON.stringify({ result: "error", message: "No personas could be detected from the uploaded documents." });
+  }
+
+  // Create or find Personas epic
+  const existingEpics = await client.listWorkItems({ project, witType: "Epic", top: 1000 });
+  const epicTitle = "Personas";
+  const existingPersonasEpic = findWorkItemByTitle(existingEpics, epicTitle);
+
+  const epicDescription = [
+    "<strong>Personas</strong><br/><br/>",
+    "Standalone epic documenting user personas identified from uploaded documents.<br/><br/>",
+    `<strong>${personas.length}</strong> persona(s) identified:<br/>`,
+    `<ul>${personas.map((p) => `<li>${p.name}</li>`).join("")}</ul>`,
+  ].join("");
+
+  let epic: { id?: number; fields?: { [key: string]: unknown } };
+  let epicCreated = false;
+
+  if (existingPersonasEpic) {
+    epic = existingPersonasEpic;
+    logger.info("Skipping duplicate Personas epic", { id: epic.id });
+  } else {
+    epic = await client.createWorkItem({
+      project,
+      witType: "Epic",
+      title: epicTitle,
+      description: epicDescription,
+      iterationPath,
+      areaPath,
+    });
+    epicCreated = true;
+  }
+
+  let featureCount = 0;
+  let storyCount = 0;
+
+  for (const persona of personas) {
+    const featureTitle = `Persona: ${persona.name.charAt(0).toUpperCase() + persona.name.slice(1)}`;
+    const existingFeatures = await client.listWorkItems({ project, witType: "Feature", parentId: epic.id!, top: 1000 });
+    const existingFeature = findWorkItemByTitle(existingFeatures, featureTitle);
+
+    let feature: { id?: number; fields?: { [key: string]: unknown } };
+    if (existingFeature) {
+      feature = existingFeature;
+      logger.info("Skipping duplicate persona feature", { id: feature.id, persona: persona.name });
+    } else {
+      feature = await client.createWorkItem({
+        project,
+        witType: "Feature",
+        title: featureTitle,
+        description: `<strong>${persona.name}</strong><br/>User persona identified from document analysis.`,
+        parentId: epic.id!,
+        iterationPath,
+        areaPath,
+      });
+      featureCount++;
+    }
+
+    // Create stories for pain points, challenges, wants/needs
+    const storySpecs = [
+      {
+        title: `Pain Points: ${persona.name}`,
+        items: persona.painPoints,
+        label: "Pain Points",
+        fallback: "No specific pain points identified — requires further stakeholder engagement.",
+      },
+      {
+        title: `Challenges: ${persona.name}`,
+        items: persona.challenges,
+        label: "Challenges",
+        fallback: "No specific challenges identified — requires further analysis.",
+      },
+      {
+        title: `Wants & Needs: ${persona.name}`,
+        items: persona.wantsNeeds,
+        label: "Wants & Needs",
+        fallback: "No specific wants/needs identified — requires further discovery.",
+      },
+    ];
+
+    const existingStories = await client.listWorkItems({ project, witType: "User Story", parentId: feature.id!, top: 1000 });
+
+    for (const spec of storySpecs) {
+      if (findWorkItemByTitle(existingStories, spec.title)) {
+        logger.info("Skipping duplicate persona story", { title: spec.title });
+        continue;
+      }
+
+      const itemList = spec.items.length > 0
+        ? spec.items.map((item) => `<li>${item}</li>`).join("")
+        : `<li>${spec.fallback}</li>`;
+
+      await client.createWorkItem({
+        project,
+        witType: "User Story",
+        title: spec.title,
+        description: [
+          `<strong>${spec.label} for ${persona.name}</strong><br/><br/>`,
+          `<ul>${itemList}</ul>`,
+        ].join(""),
+        parentId: feature.id!,
+        iterationPath,
+        areaPath,
+        tags: "Persona;Discovery",
+      });
+      storyCount++;
+    }
+  }
+
+  logger.info("Persona creation complete", { personaCount: personas.length, epicCreated, featureCount, storyCount });
+  return JSON.stringify({
+    result: "success",
+    personaCount: personas.length,
+    epicId: epic.id,
+    epicCreated,
+    features: featureCount,
+    userStories: storyCount,
+    personas: personas.map((p) => ({
+      name: p.name,
+      painPointCount: p.painPoints.length,
+      challengeCount: p.challenges.length,
+      wantsNeedsCount: p.wantsNeeds.length,
+    })),
+  });
+}
+
+async function handleCreatePersonasJira(jira: JiraClient, input: ToolInput): Promise<string> {
+  const store = getFileStore();
+  const projectKey = input.project;
+
+  const contents: string[] = [];
+  if (input.fileNames && input.fileNames.length > 0) {
+    for (const fn of input.fileNames) {
+      const file = store.get(fn);
+      if (file) contents.push(file.content);
+    }
+  } else {
+    for (const [key, file] of store.entries()) {
+      if (!key.startsWith("__")) {
+        contents.push(file.content);
+      }
+    }
+  }
+
+  if (contents.length === 0) {
+    return JSON.stringify({ result: "error", message: "No uploaded files found. Upload documents first." });
+  }
+
+  const personas = detectAllPersonas(contents);
+  if (personas.length === 0) {
+    return JSON.stringify({ result: "error", message: "No personas could be detected from the uploaded documents." });
+  }
+
+  const epicSummary = "Personas";
+  const existingEpic = await jira.findIssueBySummary(projectKey, "Epic", epicSummary);
+  const epic = existingEpic ?? await jira.createIssue({
+    projectKey,
+    issueType: "Epic",
+    summary: epicSummary,
+    description: `Personas identified from document analysis.\n\n${personas.map((p) => `- ${p.name}`).join("\n")}`,
+    labels: ["mcp", "persona"],
+  });
+
+  let storyCount = 0;
+  for (const persona of personas) {
+    const storySpecs = [
+      { title: `Pain Points: ${persona.name}`, items: persona.painPoints, label: "Pain Points" },
+      { title: `Challenges: ${persona.name}`, items: persona.challenges, label: "Challenges" },
+      { title: `Wants & Needs: ${persona.name}`, items: persona.wantsNeeds, label: "Wants & Needs" },
+    ];
+
+    for (const spec of storySpecs) {
+      const existing = await jira.findIssueBySummary(projectKey, "Story", spec.title);
+      if (existing) continue;
+
+      const itemList = spec.items.length > 0
+        ? spec.items.map((item) => `- ${item}`).join("\n")
+        : "- Requires further discovery";
+
+      await jira.createIssue({
+        projectKey,
+        issueType: "Story",
+        summary: spec.title,
+        description: `${spec.label} for ${persona.name}\n\n${itemList}`,
+        epicKey: epic.key,
+        labels: ["mcp", "persona"],
+      });
+      storyCount++;
+    }
+  }
+
+  return JSON.stringify({
+    result: "success",
+    targetSystem: "jira",
+    personaCount: personas.length,
+    epicKey: epic.key,
+    userStories: storyCount,
+    personas: personas.map((p) => ({
+      name: p.name,
+      painPointCount: p.painPoints.length,
+      challengeCount: p.challenges.length,
+      wantsNeedsCount: p.wantsNeeds.length,
+    })),
+  });
+}
+
 function buildEpicDescription(themeName: string, subtopics: string[]): string {
   const featureListHtml = subtopics.map((s) => `<li>${s}</li>`).join("");
   return [
@@ -2012,16 +2365,7 @@ async function getOrCreateEpic(
 ): Promise<{ epic: { id?: number; fields?: { [key: string]: unknown } }; created: boolean }> {
   const existingEpic = findWorkItemByTitle(existingEpics, themeName);
   if (existingEpic) {
-    if (existingEpic.id) {
-      await client.updateWorkItem({
-        project,
-        workItemId: existingEpic.id,
-        description: buildEpicDescription(themeName, uniqueSubtopics),
-        iterationPath,
-        areaPath,
-      });
-    }
-    logger.info("Reusing existing epic", { id: existingEpic.id, title: themeName });
+    logger.info("Skipping duplicate epic", { id: existingEpic.id, title: themeName });
     return { epic: existingEpic, created: false };
   }
 
@@ -2050,16 +2394,7 @@ async function getOrCreateFeature(
   const existingFeatures = await client.listWorkItems({ project, witType: "Feature", parentId: epicId, top: 1000 });
   const existingFeature = findWorkItemByTitle(existingFeatures, subtopic);
   if (existingFeature) {
-    if (existingFeature.id) {
-      await client.updateWorkItem({
-        project,
-        workItemId: existingFeature.id,
-        description: buildFeatureDescription(subtopic, themeName),
-        iterationPath,
-        areaPath,
-      });
-    }
-    logger.info("Reusing existing feature", { id: existingFeature.id, title: subtopic, parentEpicId: epicId });
+    logger.info("Skipping duplicate feature", { id: existingFeature.id, title: subtopic, parentEpicId: epicId });
     return { feature: existingFeature, created: false };
   }
 
@@ -2108,21 +2443,7 @@ async function getOrCreateStory(
   );
 
   if (existingStory) {
-    if (existingStory.id) {
-      await client.updateWorkItem({
-        project,
-        workItemId: existingStory.id,
-        title: storyTitle,
-        description: enrichedPayload.description,
-        acceptanceCriteria: enrichedPayload.acceptanceCriteria,
-        moscow: "Must",
-        iterationPath,
-        areaPath,
-        tags: enrichedPayload.tags,
-        customFields: enrichedPayload.customFields,
-      });
-    }
-    logger.info("Reusing existing user story", { id: existingStory.id, title: storyTitle, parentFeatureId: featureId });
+    logger.info("Skipping duplicate user story", { id: existingStory.id, title: storyTitle, parentFeatureId: featureId });
     return { story: existingStory, created: false };
   }
 
@@ -2162,15 +2483,7 @@ async function createMissingTasks(
   for (const taskTitle of titles) {
     const existingTask = findWorkItemByTitle(existingTasks, taskTitle);
     if (existingTask) {
-      if (existingTask.id) {
-        await client.updateWorkItem({
-          project,
-          workItemId: existingTask.id,
-          iterationPath,
-          areaPath,
-        });
-      }
-      logger.info("Reusing existing task", { id: existingTask.id, title: taskTitle, parentStoryId: storyId });
+      logger.info("Skipping duplicate task", { id: existingTask.id, title: taskTitle, parentStoryId: storyId });
       continue;
     }
 
@@ -2302,21 +2615,7 @@ async function getOrCreateProcessStory(
   const enrichedPayload = applyAdoEnrichment(description, acceptanceCriteria, tags, enrichment);
 
   if (existingStory) {
-    if (existingStory.id) {
-      await client.updateWorkItem({
-        project,
-        workItemId: existingStory.id,
-        title: storyTitle,
-        description: enrichedPayload.description,
-        acceptanceCriteria: enrichedPayload.acceptanceCriteria,
-        moscow: "Must",
-        iterationPath,
-        areaPath,
-        tags: enrichedPayload.tags,
-        customFields: enrichedPayload.customFields,
-      });
-    }
-    logger.info("Reusing existing process user story", { id: existingStory.id, title: storyTitle, parentFeatureId: featureId });
+    logger.info("Skipping duplicate process user story", { id: existingStory.id, title: storyTitle, parentFeatureId: featureId });
     return { story: existingStory, created: false };
   }
 
@@ -2393,14 +2692,6 @@ async function handleCreateBacklogFromProcess(
 
     if (epicCreated) {
       epicCount++;
-    } else if (epic.id) {
-      await client.updateWorkItem({
-        project,
-        workItemId: epic.id,
-        description: buildProcessEpicDescription(stage),
-        iterationPath,
-        areaPath,
-      });
     }
 
     for (const step of uniqueSteps) {
@@ -2416,14 +2707,6 @@ async function handleCreateBacklogFromProcess(
 
       if (featureCreated) {
         featureCount++;
-      } else if (feature.id) {
-        await client.updateWorkItem({
-          project,
-          workItemId: feature.id,
-          description: buildProcessFeatureDescription(step, stage.title),
-          iterationPath,
-          areaPath,
-        });
       }
 
       const { story, created: storyCreated } = await getOrCreateProcessStory(
@@ -3342,6 +3625,13 @@ export async function handleWorkItemTool(
           description: input.description,
         });
         return JSON.stringify({ result: "success", id: updated.id });
+      }
+
+      case "create_personas": {
+        if (targetSystem === "jira") {
+          return handleCreatePersonasJira(requireJiraClient(clients), input);
+        }
+        return handleCreatePersonas(requireAzureClient(clients), input);
       }
 
       case "migrate_process": {
