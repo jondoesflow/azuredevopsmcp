@@ -223,6 +223,58 @@ export function createApiRouter(config: AppConfig) {
     }
   });
 
+  router.post("/setup/check-enrichment", validateRateLimit, async (req: Request, res: Response) => {
+    try {
+      const mcpClient = createMcpClient(req);
+      const userId = getUserId(req);
+      const state = setupStore.getState(userId);
+      const project = state.azureDevOpsProject;
+      if (!project) {
+        res.status(400).json({ error: "No project configured. Validate your connection first." });
+        return;
+      }
+      const result = await mcpClient.executeTool("check_enrichment_fields", { project });
+      res.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to check enrichment fields";
+      res.status(502).json({ error: message });
+    }
+  });
+
+  router.post("/setup/migrate-enrichment", processRateLimit, async (req: Request, res: Response) => {
+    try {
+      const { sourceOrgUrl, sourceProject, sourceProcessName, sourcePat } = req.body as {
+        sourceOrgUrl?: string;
+        sourceProject?: string;
+        sourceProcessName?: string;
+        sourcePat?: string;
+      };
+      if (!sourceOrgUrl || !sourceProject || !sourceProcessName || !sourcePat) {
+        res.status(400).json({ error: "sourceOrgUrl, sourceProject, sourceProcessName, and sourcePat are required." });
+        return;
+      }
+      const mcpClient = createMcpClient(req);
+      const userId = getUserId(req);
+      const state = setupStore.getState(userId);
+      const project = state.azureDevOpsProject;
+      if (!project) {
+        res.status(400).json({ error: "No project configured. Validate your connection first." });
+        return;
+      }
+      const result = await mcpClient.executeTool("migrate_enrichment_process", {
+        project,
+        sourceOrgUrl: sourceOrgUrl.trim(),
+        sourceProject: sourceProject.trim(),
+        sourceProcessName: sourceProcessName.trim(),
+        sourcePat: sourcePat.trim(),
+      });
+      res.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Enrichment process migration failed";
+      res.status(502).json({ error: message });
+    }
+  });
+
   router.get("/facts/random", async (_req: Request, res: Response) => {
     const apiKey = process.env.FACTS_API_KEY;
     if (!apiKey) {

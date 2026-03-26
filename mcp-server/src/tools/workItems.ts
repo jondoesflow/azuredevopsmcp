@@ -1,5 +1,6 @@
 import { AzureDevOpsClient } from "../azureDevOpsClient.js";
 import { logger } from "../logger.js";
+import { checkProjectEnrichmentFields, migrateProcess } from "../processMigration.js";
 import { enrichGeneratedWorkItems } from "./enrichment/orchestrator.js";
 import {
   EnrichmentFlags,
@@ -972,6 +973,48 @@ export const workItemTools: Tool[] = [
       required: ["project"],
     },
   },
+  {
+    name: "check_enrichment_fields",
+    description:
+      "Check whether the target Azure DevOps project's process template includes the Enrichment custom fields required for backlog enrichment.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        project: {
+          type: "string",
+          description: "Azure DevOps project name.",
+        },
+      },
+      required: ["project"],
+    },
+  },
+  {
+    name: "migrate_enrichment_process",
+    description:
+      "Migrate the Enrichment process template (with all custom fields, states, rules, and layout) from a source Azure DevOps org to the target org.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        sourceOrgUrl: {
+          type: "string",
+          description: "Source Azure DevOps org URL (e.g. https://dev.azure.com/myorg).",
+        },
+        sourceProject: {
+          type: "string",
+          description: "Source project name that uses the Enrichment process.",
+        },
+        sourceProcessName: {
+          type: "string",
+          description: "Name of the process template to migrate (e.g. 'Enrichment').",
+        },
+        sourcePat: {
+          type: "string",
+          description: "PAT token for the source Azure DevOps org.",
+        },
+      },
+      required: ["sourceOrgUrl", "sourceProject", "sourceProcessName", "sourcePat"],
+    },
+  },
 ];
 
 interface ToolInput {
@@ -1007,6 +1050,10 @@ interface ToolInput {
   includePreview?: boolean;
   previewFileName?: string;
   reviewOnly?: boolean;
+  sourceOrgUrl?: string;
+  sourceProject?: string;
+  sourceProcessName?: string;
+  sourcePat?: string;
 }
 
 interface WorkItemClients {
@@ -2632,6 +2679,37 @@ export async function handleWorkItemTool(
           description: input.description,
         });
         return JSON.stringify({ result: "success", id: updated.id });
+      }
+
+      case "check_enrichment_fields": {
+        const client = requireAzureClient(clients);
+        const orgUrl = client.getOrgUrl();
+        const pat = client.getPat();
+        const result = await checkProjectEnrichmentFields(orgUrl, pat, input.project);
+        return JSON.stringify({
+          result: "success",
+          hasEnrichmentFields: result.hasEnrichmentFields,
+          processName: result.processName,
+          missingFieldCount: result.missingFields.length,
+          missingFields: result.missingFields,
+        });
+      }
+
+      case "migrate_enrichment_process": {
+        const client = requireAzureClient(clients);
+        if (!input.sourceOrgUrl || !input.sourceProject || !input.sourceProcessName || !input.sourcePat) {
+          throw new Error("sourceOrgUrl, sourceProject, sourceProcessName, and sourcePat are all required.");
+        }
+        await migrateProcess({
+          sourceOrgUrl: input.sourceOrgUrl,
+          sourceProject: input.sourceProject,
+          sourceProcessName: input.sourceProcessName,
+          sourcePat: input.sourcePat,
+          targetOrgUrl: client.getOrgUrl(),
+          targetProject: input.project,
+          targetPat: client.getPat(),
+        });
+        return JSON.stringify({ result: "success", message: "Enrichment process migrated successfully." });
       }
 
       default:
