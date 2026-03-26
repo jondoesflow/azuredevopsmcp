@@ -170,19 +170,13 @@ export function App() {
   const { instance, accounts } = useMsal();
 
   const [setupState, setSetupState] = useState<SetupConfigState | null>(null);
-  const [selectedPlatform, setSelectedPlatform] = useState<"azure-devops" | "jira" | null>(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [showValidationSuccess, setShowValidationSuccess] = useState(false);
   const [validatingConnection, setValidatingConnection] = useState(false);
-  const [connectionChoiceAcknowledged, setConnectionChoiceAcknowledged] = useState(false);
 
   const [azureDevOpsUrl, setAzureDevOpsUrl] = useState("");
   const [azureDevOpsProject, setAzureDevOpsProject] = useState("");
   const [azureDevOpsPat, setAzureDevOpsPat] = useState("");
-
-  const [jiraBaseUrl, setJiraBaseUrl] = useState("");
-  const [jiraProject, setJiraProject] = useState("");
-  const [jiraApiToken, setJiraApiToken] = useState("");
 
   const [analysisMode, setAnalysisMode] = useState<"process" | "themes">("process");
   const [files, setFiles] = useState<UploadedFile[]>([]);
@@ -204,36 +198,9 @@ export function App() {
 
   const account = accounts[0];
   const isAuthenticated = Boolean(account);
-  const activePlatform = useMemo(() => {
-    if (selectedPlatform) return selectedPlatform;
-    if (setupState?.platform) return setupState.platform;
-
-    const jiraHint = Boolean((setupState?.jiraProject ?? jiraProject).trim() || (setupState?.jiraBaseUrl ?? jiraBaseUrl).trim());
-    const adoHint = Boolean((setupState?.azureDevOpsProject ?? azureDevOpsProject).trim() || (setupState?.azureDevOpsUrl ?? azureDevOpsUrl).trim());
-
-    if (jiraHint && !adoHint) return "jira";
-    if (adoHint && !jiraHint) return "azure-devops";
-    return null;
-  }, [
-    azureDevOpsProject,
-    azureDevOpsUrl,
-    jiraBaseUrl,
-    jiraProject,
-    selectedPlatform,
-    setupState?.azureDevOpsProject,
-    setupState?.azureDevOpsUrl,
-    setupState?.jiraBaseUrl,
-    setupState?.jiraProject,
-    setupState?.platform,
-  ]);
   const configuredProject = useMemo(
-    () => {
-      if (activePlatform === "jira") {
-        return (jiraProject || setupState?.jiraProject || "").trim();
-      }
-      return (azureDevOpsProject || setupState?.azureDevOpsProject || "").trim();
-    },
-    [activePlatform, azureDevOpsProject, jiraProject, setupState?.azureDevOpsProject, setupState?.jiraProject]
+    () => (azureDevOpsProject || setupState?.azureDevOpsProject || "").trim(),
+    [azureDevOpsProject, setupState?.azureDevOpsProject]
   );
   const spinnerGlyph = ["|", "/", "-", "\\"][spinnerFrame % 4];
   const lowConfidenceWorkItems = useMemo(() => {
@@ -286,10 +253,6 @@ export function App() {
           <p className="fields-warning">
             These fields are <strong>Azure DevOps only</strong>. They are populated into ADO custom User Story fields during backlog creation/update.
           </p>
-          <p className="fields-note">
-            For <strong>Jira</strong>, these values are not mapped to custom fields. Instead, enrichment details are appended at the end of the User Story description.
-          </p>
-
           <div className="fields-table-wrap" role="region" aria-label="ADO enrichment field catalog">
             <table className="fields-table">
               <thead>
@@ -329,12 +292,8 @@ export function App() {
 
   function hydrateSetup(state: SetupConfigState): void {
     setSetupState(state);
-    setSelectedPlatform(state.platform ?? null);
     setAzureDevOpsUrl(state.azureDevOpsUrl ?? "");
     setAzureDevOpsProject(state.azureDevOpsProject ?? "");
-    setJiraBaseUrl(state.jiraBaseUrl ?? "");
-    setJiraProject(state.jiraProject ?? "");
-    setConnectionChoiceAcknowledged(false);
   }
 
   async function getAccessToken(): Promise<string> {
@@ -362,7 +321,6 @@ export function App() {
   useEffect(() => {
     if (!isAuthenticated) {
       setSetupState(null);
-      setSelectedPlatform(null);
       setFiles([]);
       setBoardUrl(null);
       setResultSummary(null);
@@ -501,34 +459,15 @@ export function App() {
 
   function currentSetupPayload(includeSecrets: boolean): SetupConfigPayload {
     return {
-      platform: selectedPlatform ?? undefined,
       azureDevOpsUrl: azureDevOpsUrl.trim() || undefined,
       azureDevOpsProject: azureDevOpsProject.trim() || undefined,
       azureDevOpsPat: includeSecrets ? azureDevOpsPat.trim() || undefined : undefined,
-      jiraBaseUrl: jiraBaseUrl.trim() || undefined,
-      jiraProject: jiraProject.trim() || undefined,
-      jiraApiToken: includeSecrets ? jiraApiToken.trim() || undefined : undefined,
     };
   }
 
-  function hasSavedConnectionFor(platform: "azure-devops" | "jira"): boolean {
+  function hasSavedConnection(): boolean {
     if (!setupState) return false;
-    if (platform === "azure-devops") {
-      return Boolean(setupState.azureDevOpsUrl && setupState.azureDevOpsProject && setupState.hasAzureDevOpsPat);
-    }
-    return Boolean(setupState.jiraBaseUrl && setupState.jiraProject && setupState.hasJiraApiToken);
-  }
-
-  async function choosePlatform(platform: "azure-devops" | "jira"): Promise<void> {
-    setSelectedPlatform(platform);
-    setError(null);
-    setStatus(null);
-    if (hasSavedConnectionFor(platform)) {
-      setConnectionChoiceAcknowledged(false);
-      logLine(`Existing ${platform === "jira" ? "Jira" : "Azure DevOps"} profile found. Confirm or edit details.`);
-      return;
-    }
-    setConnectionChoiceAcknowledged(true);
+    return Boolean(setupState.azureDevOpsUrl && setupState.azureDevOpsProject && setupState.hasAzureDevOpsPat);
   }
 
   async function saveConnectionDetails(): Promise<void> {
@@ -565,7 +504,6 @@ export function App() {
       const message = validationError instanceof Error ? validationError.message : "Validation failed";
       setError(message);
       logLine(`Validation failed: ${message}`);
-      setConnectionChoiceAcknowledged(true);
     } finally {
       setValidatingConnection(false);
       setActionLoading((current) => (current === "validate-connection" ? null : current));
@@ -660,7 +598,7 @@ export function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Document processing failed";
       logLine(`Document processing failed: ${message}`);
-      logLine("Please retry from Step 3.");
+      logLine("Please retry from Step 2.");
       setError(message);
     } finally {
       stopProgressVisuals();
@@ -671,34 +609,6 @@ export function App() {
   }
 
   function renderConnectionFields(): JSX.Element {
-    if (selectedPlatform === "jira") {
-      return (
-        <>
-          <label>
-            Jira organization URL
-            <input
-              placeholder="https://your-domain.atlassian.net"
-              value={jiraBaseUrl}
-              onChange={(event) => setJiraBaseUrl(event.target.value)}
-            />
-          </label>
-          <label>
-            Jira project name / key
-            <input value={jiraProject} onChange={(event) => setJiraProject(event.target.value)} />
-          </label>
-          <label>
-            Jira PAT token
-            <input
-              type="password"
-              placeholder={setupState?.hasJiraApiToken ? "Leave blank to keep saved token" : "Enter Jira PAT token"}
-              value={jiraApiToken}
-              onChange={(event) => setJiraApiToken(event.target.value)}
-            />
-          </label>
-        </>
-      );
-    }
-
     return (
       <>
         <label>
@@ -748,7 +658,7 @@ export function App() {
       <header className="hero">
         <img src="/capgemini-logo-white.svg" alt="Capgemini" style={{ height: 54, marginBottom: 8, display: "block" }} />
         <h1>Backlog Assistant</h1>
-        <p>Secure web interface for Azure DevOps and Jira backlog creation.</p>
+        <p>Secure web interface for Azure DevOps backlog creation.</p>
         <div className="auth-row">
           <span>Signed in as {account?.username}</span>
           <button onClick={() => setShowEnrichmentFieldsPage((current) => !current)}>
@@ -763,44 +673,32 @@ export function App() {
       {showEnrichmentFieldsPage ? renderEnrichmentFieldsPage() : !connectionReady ? (
         <main className="wizard-layout">
           <section className="panel control-panel">
-            <h2>Step 1: Choose platform</h2>
-            <p>Are you importing into Azure DevOps or Jira?</p>
-            <div className="platform-choice">
-              <button className={selectedPlatform === "azure-devops" ? "selected" : ""} onClick={() => void choosePlatform("azure-devops")}>Azure DevOps</button>
-              <button className={selectedPlatform === "jira" ? "selected" : ""} onClick={() => void choosePlatform("jira")}>Jira</button>
-            </div>
-
-            {selectedPlatform && hasSavedConnectionFor(selectedPlatform) && !connectionChoiceAcknowledged ? (
+            {hasSavedConnection() ? (
               <div className="setup-card">
                 <h3>Saved connection found</h3>
                 <p>Confirm existing details or make changes before validation.</p>
                 <div className="setup-actions">
                   <button disabled={validatingConnection} onClick={() => void validateConnection(true)}>Confirm & validate</button>
-                  <button disabled={validatingConnection} onClick={() => setConnectionChoiceAcknowledged(true)}>Make changes</button>
                 </div>
                 {renderInlineSpinner("validate-connection", "Validating connection...")}
               </div>
             ) : null}
 
-            {selectedPlatform && (connectionChoiceAcknowledged || !hasSavedConnectionFor(selectedPlatform)) ? (
-              <>
-                <h2>Step 2: Enter connection details</h2>
-                {renderConnectionFields()}
-                <div className="setup-actions">
-                  <button disabled={validatingConnection} onClick={() => void saveConnectionDetails()}>Save details</button>
-                  <button disabled={validatingConnection} onClick={() => void validateConnection(false)}>
-                    {validatingConnection ? "Validating connection..." : "Validate connection"}
-                  </button>
-                </div>
-                <div className="inline-action-row">
-                  {renderInlineSpinner("save-connection", "Saving connection details...")}
-                  {renderInlineSpinner("validate-connection", "Validating connection...")}
-                </div>
-              </>
-            ) : null}
+            <h2>Step 1: Enter connection details</h2>
+            {renderConnectionFields()}
+            <div className="setup-actions">
+              <button disabled={validatingConnection} onClick={() => void saveConnectionDetails()}>Save details</button>
+              <button disabled={validatingConnection} onClick={() => void validateConnection(false)}>
+                {validatingConnection ? "Validating connection..." : "Validate connection"}
+              </button>
+            </div>
+            <div className="inline-action-row">
+              {renderInlineSpinner("save-connection", "Saving connection details...")}
+              {renderInlineSpinner("validate-connection", "Validating connection...")}
+            </div>
 
-            <h2>Step 3: Upload + analysis</h2>
-            <p>Connected platform: <strong>{activePlatform === "jira" ? "Jira" : "Azure DevOps"}</strong></p>
+            <h2>Step 2: Upload + analysis</h2>
+            <p>Connected platform: <strong>Azure DevOps</strong></p>
             <p>Project: <strong>{configuredProject || "(from validated setup)"}</strong></p>
 
             <label className="upload">
@@ -845,8 +743,8 @@ export function App() {
       ) : (
         <main className="layout">
           <section className="panel control-panel">
-            <h2>Step 3: Upload + analysis</h2>
-            <p>Connected platform: <strong>{activePlatform === "jira" ? "Jira" : "Azure DevOps"}</strong></p>
+            <h2>Step 2: Upload + analysis</h2>
+            <p>Connected platform: <strong>Azure DevOps</strong></p>
             <p>Project: <strong>{configuredProject}</strong></p>
 
             <label className="upload">
@@ -899,7 +797,7 @@ export function App() {
             ) : null}
             {boardUrl ? (
               <div className="setup-status">
-                Step 4: <a href={boardUrl} target="_blank" rel="noreferrer">Open board</a>
+                Step 3: <a href={boardUrl} target="_blank" rel="noreferrer">Open board</a>
               </div>
             ) : null}
             {renderLowConfidenceDashboard()}
@@ -932,12 +830,8 @@ export function App() {
         <div className="modal-backdrop">
           <div className="modal-card">
             <h3>Configuration</h3>
-            <p>Update your saved Azure DevOps/Jira connection profile.</p>
-            <div className="platform-choice">
-              <button className={selectedPlatform === "azure-devops" ? "selected" : ""} onClick={() => setSelectedPlatform("azure-devops")}>Azure DevOps</button>
-              <button className={selectedPlatform === "jira" ? "selected" : ""} onClick={() => setSelectedPlatform("jira")}>Jira</button>
-            </div>
-            {selectedPlatform ? renderConnectionFields() : null}
+            <p>Update your saved Azure DevOps connection profile.</p>
+            {renderConnectionFields()}
             <div className="setup-actions">
               <button onClick={() => void saveConnectionDetails()}>Save</button>
               <button onClick={() => setShowConfigModal(false)}>Close</button>

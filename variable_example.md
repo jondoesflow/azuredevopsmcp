@@ -30,44 +30,6 @@ DEBUG=false
 
 
 # ============================
-# Jira Configuration
-# ============================
-
-# Jira base URL
-# Example: https://your-company.atlassian.net
-JIRA_BASE_URL=https://your-jira-instance.atlassian.net
-
-# Jira authentication type
-# Common values: Bearer | Basic
-JIRA_AUTH_TYPE=Bearer
-
-# Jira username (often an email or service account)
-# Example: service-account@company.com
-JIRA_USERNAME=your-jira-username
-
-# Jira API token
-# Example format: jira_api_token_xxxxxxxxx
-JIRA_API_TOKEN=your-jira-api-token
-
-
-# ============================
-# Jira Field & Linking Configuration
-# ============================
-
-# Custom field ID used to link Epics
-# Example: customfield_10001
-JIRA_EPIC_LINK_FIELD_ID=customfield_XXXXX
-
-# Custom field ID for Epic Name
-# Example: customfield_10004
-JIRA_EPIC_NAME_FIELD_ID=customfield_YYYYY
-
-# Jira issue link type used for hierarchy
-# Common examples: Relates, Blocks, Parent/Child
-JIRA_HIERARCHY_LINK_TYPE=Relates
-
-
-# ============================
 # MCP Configuration
 # ============================
 

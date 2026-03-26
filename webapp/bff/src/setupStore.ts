@@ -50,14 +50,10 @@ const envPath = path.join(__dirname, "..", ".env");
 const perUserPath = path.join(__dirname, "..", ".setup-users.json");
 
 interface ConnectionDefaults {
-  platform?: "azure-devops" | "jira";
   azureDevOpsOrg?: string;
   azureDevOpsUrl?: string;
   azureDevOpsProject?: string;
   azureDevOpsPat?: string;
-  jiraBaseUrl?: string;
-  jiraProject?: string;
-  jiraApiToken?: string;
   isValidated: boolean;
 }
 
@@ -68,13 +64,6 @@ interface StoredUserConfig extends ConnectionDefaults {
 function normalizeOptional(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
-}
-
-function normalizePlatform(value: string | undefined): "azure-devops" | "jira" | undefined {
-  const normalized = normalizeOptional(value)?.toLowerCase();
-  if (!normalized) return undefined;
-  if (normalized === "azure-devops" || normalized === "jira") return normalized;
-  return undefined;
 }
 
 function parseEnv(): Map<string, string> {
@@ -124,7 +113,6 @@ function encryptStoredUserConfig(config: StoredUserConfig): StoredUserConfig {
   return {
     ...config,
     azureDevOpsPat: encryptSecret(config.azureDevOpsPat),
-    jiraApiToken: encryptSecret(config.jiraApiToken),
   };
 }
 
@@ -132,7 +120,6 @@ function decryptStoredUserConfig(config: StoredUserConfig): StoredUserConfig {
   return {
     ...config,
     azureDevOpsPat: decryptSecret(config.azureDevOpsPat),
-    jiraApiToken: decryptSecret(config.jiraApiToken),
   };
 }
 
@@ -176,14 +163,10 @@ export class SetupStore {
   constructor() {
     const fileDefaults = parseEnv();
     this.defaults = {
-      platform: normalizePlatform(fileDefaults.get("TARGET_PLATFORM") ?? process.env.TARGET_PLATFORM),
       azureDevOpsOrg: normalizeOptional(fileDefaults.get("AZURE_DEVOPS_ORG") ?? process.env.AZURE_DEVOPS_ORG),
       azureDevOpsUrl: normalizeOptional(fileDefaults.get("AZURE_DEVOPS_URL") ?? process.env.AZURE_DEVOPS_URL),
       azureDevOpsProject: normalizeOptional(fileDefaults.get("AZURE_DEVOPS_PROJECT") ?? process.env.AZURE_DEVOPS_PROJECT),
       azureDevOpsPat: normalizeOptional(fileDefaults.get("AZURE_DEVOPS_PAT") ?? process.env.AZURE_DEVOPS_PAT),
-      jiraBaseUrl: normalizeOptional(fileDefaults.get("JIRA_BASE_URL") ?? fileDefaults.get("JIRA_URL") ?? process.env.JIRA_BASE_URL ?? process.env.JIRA_URL),
-      jiraProject: normalizeOptional(fileDefaults.get("JIRA_PROJECT") ?? process.env.JIRA_PROJECT),
-      jiraApiToken: normalizeOptional(fileDefaults.get("JIRA_API_TOKEN") ?? fileDefaults.get("JIRA_PAT") ?? process.env.JIRA_API_TOKEN ?? process.env.JIRA_PAT),
       isValidated: (fileDefaults.get("CONNECTION_VALIDATED") ?? process.env.CONNECTION_VALIDATED ?? "").toLowerCase() === "true",
     };
   }
@@ -191,14 +174,10 @@ export class SetupStore {
   private resolveForUser(userId?: string): ConnectionDefaults {
     const userConfig = userId ? readPerUser()[userId] : undefined;
     return {
-      platform: userConfig?.platform ?? normalizePlatform(process.env.TARGET_PLATFORM) ?? this.defaults.platform,
       azureDevOpsOrg: userConfig?.azureDevOpsOrg ?? normalizeOptional(process.env.AZURE_DEVOPS_ORG) ?? this.defaults.azureDevOpsOrg,
       azureDevOpsUrl: userConfig?.azureDevOpsUrl ?? normalizeOptional(process.env.AZURE_DEVOPS_URL) ?? this.defaults.azureDevOpsUrl,
       azureDevOpsProject: userConfig?.azureDevOpsProject ?? normalizeOptional(process.env.AZURE_DEVOPS_PROJECT) ?? this.defaults.azureDevOpsProject,
       azureDevOpsPat: userConfig?.azureDevOpsPat ?? normalizeOptional(process.env.AZURE_DEVOPS_PAT) ?? this.defaults.azureDevOpsPat,
-      jiraBaseUrl: userConfig?.jiraBaseUrl ?? normalizeOptional(process.env.JIRA_BASE_URL) ?? normalizeOptional(process.env.JIRA_URL) ?? this.defaults.jiraBaseUrl,
-      jiraProject: userConfig?.jiraProject ?? normalizeOptional(process.env.JIRA_PROJECT) ?? this.defaults.jiraProject,
-      jiraApiToken: userConfig?.jiraApiToken ?? normalizeOptional(process.env.JIRA_API_TOKEN) ?? normalizeOptional(process.env.JIRA_PAT) ?? this.defaults.jiraApiToken,
       isValidated: userConfig?.isValidated ?? this.defaults.isValidated,
     };
   }
@@ -206,37 +185,28 @@ export class SetupStore {
   getState(userId?: string): SetupConnectionState {
     const resolved = this.resolveForUser(userId);
     return {
-      platform: resolved.platform,
       azureDevOpsOrg: resolved.azureDevOpsOrg,
       azureDevOpsUrl: resolved.azureDevOpsUrl,
       azureDevOpsProject: resolved.azureDevOpsProject,
-      jiraBaseUrl: resolved.jiraBaseUrl,
-      jiraProject: resolved.jiraProject,
       hasAzureDevOpsPat: Boolean(resolved.azureDevOpsPat),
-      hasJiraApiToken: Boolean(resolved.jiraApiToken),
       isValidated: resolved.isValidated,
     };
   }
 
-  getSecrets(userId?: string): { azureDevOpsPat?: string; jiraApiToken?: string } {
+  getSecrets(userId?: string): { azureDevOpsPat?: string } {
     const resolved = this.resolveForUser(userId);
     return {
       azureDevOpsPat: resolved.azureDevOpsPat,
-      jiraApiToken: resolved.jiraApiToken,
     };
   }
 
   save(input: SetupConnectionInput, userId?: string): SetupConnectionState {
     const current = this.resolveForUser(userId);
     const merged: ConnectionDefaults = {
-      platform: normalizePlatform(input.platform) ?? current.platform,
       azureDevOpsOrg: normalizeOptional(input.azureDevOpsOrg) ?? current.azureDevOpsOrg,
       azureDevOpsUrl: normalizeOptional(input.azureDevOpsUrl) ?? current.azureDevOpsUrl,
       azureDevOpsProject: normalizeOptional(input.azureDevOpsProject) ?? current.azureDevOpsProject,
       azureDevOpsPat: normalizeOptional(input.azureDevOpsPat) ?? current.azureDevOpsPat,
-      jiraBaseUrl: normalizeOptional(input.jiraBaseUrl) ?? current.jiraBaseUrl,
-      jiraProject: normalizeOptional(input.jiraProject) ?? current.jiraProject,
-      jiraApiToken: normalizeOptional(input.jiraApiToken) ?? current.jiraApiToken,
       isValidated: false,
     };
 
@@ -254,22 +224,14 @@ export class SetupStore {
     process.env.AZURE_DEVOPS_URL = merged.azureDevOpsUrl ?? "";
     process.env.AZURE_DEVOPS_PROJECT = merged.azureDevOpsProject ?? "";
     process.env.AZURE_DEVOPS_PAT = merged.azureDevOpsPat ?? "";
-    process.env.TARGET_PLATFORM = merged.platform ?? "";
-    process.env.JIRA_BASE_URL = merged.jiraBaseUrl ?? "";
-    process.env.JIRA_PROJECT = merged.jiraProject ?? "";
-    process.env.JIRA_API_TOKEN = merged.jiraApiToken ?? "";
     process.env.CONNECTION_VALIDATED = "false";
 
     writeEnv(
       new Map<string, string>([
-        ["TARGET_PLATFORM", process.env.TARGET_PLATFORM],
         ["AZURE_DEVOPS_ORG", process.env.AZURE_DEVOPS_ORG],
         ["AZURE_DEVOPS_URL", process.env.AZURE_DEVOPS_URL],
         ["AZURE_DEVOPS_PROJECT", process.env.AZURE_DEVOPS_PROJECT],
         ["AZURE_DEVOPS_PAT", process.env.AZURE_DEVOPS_PAT],
-        ["JIRA_BASE_URL", process.env.JIRA_BASE_URL],
-        ["JIRA_PROJECT", process.env.JIRA_PROJECT],
-        ["JIRA_API_TOKEN", process.env.JIRA_API_TOKEN],
         ["CONNECTION_VALIDATED", process.env.CONNECTION_VALIDATED],
       ])
     );
