@@ -22,6 +22,15 @@ export interface Config {
     pat: string;
     url: string;
   };
+  processMigration?: {
+    sourceOrgUrl: string;
+    sourceProject: string;
+    sourceProcessName: string;
+    targetOrgUrl: string;
+    targetProject: string;
+    sourcePat: string;
+    targetPat: string;
+  };
 }
 
 function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
@@ -78,6 +87,34 @@ export function loadConfig(): Config {
     pat: process.env.AZURE_DEVOPS_PAT!,
     url: process.env.AZURE_DEVOPS_URL!,
   };
+
+  // Process migration config (optional – enabled when SOURCE_ADO_ORG_URL is set)
+  const sourceOrgUrl = process.env.SOURCE_ADO_ORG_URL;
+  if (sourceOrgUrl) {
+    const sourcePat = process.env.SOURCE_ADO_PAT;
+    const sourceProject = process.env.SOURCE_ADO_PROJECT;
+    const sourceProcessName = process.env.SOURCE_ADO_PROCESS_NAME;
+    const targetOrgUrl = process.env.TARGET_ADO_ORG_URL || process.env.AZURE_DEVOPS_URL;
+    const targetProject = process.env.TARGET_ADO_PROJECT || process.env.AZURE_DEVOPS_ORG;
+    const targetPat = process.env.TARGET_ADO_PAT || process.env.AZURE_DEVOPS_PAT;
+
+    if (!sourcePat || !sourceProject || !sourceProcessName || !targetOrgUrl || !targetProject || !targetPat) {
+      console.error("Error: Process migration is partially configured. When SOURCE_ADO_ORG_URL is set, these are also required:");
+      console.error("  SOURCE_ADO_PAT, SOURCE_ADO_PROJECT, SOURCE_ADO_PROCESS_NAME");
+      console.error("  TARGET_ADO_ORG_URL (or AZURE_DEVOPS_URL), TARGET_ADO_PROJECT (or AZURE_DEVOPS_ORG), TARGET_ADO_PAT (or AZURE_DEVOPS_PAT)");
+      process.exit(1);
+    }
+
+    config.processMigration = {
+      sourceOrgUrl,
+      sourceProject,
+      sourceProcessName,
+      targetOrgUrl,
+      targetProject,
+      sourcePat,
+      targetPat,
+    };
+  }
 
   return config;
 }

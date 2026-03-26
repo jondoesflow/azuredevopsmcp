@@ -11,6 +11,7 @@ import { Config, loadConfig } from "./config.js";
 import { logger } from "./logger.js";
 import { AzureDevOpsClient } from "./azureDevOpsClient.js";
 import { workItemTools, handleWorkItemTool, getFileStore } from "./tools/workItems.js";
+import { ensureEnrichmentProcess } from "./processMigration.js";
 
 const PORT = Number.parseInt(process.env.PORT || "80", 10);
 const TRANSPORT_MODE = process.env.TRANSPORT_MODE || "http"; // "http" or "stdio"
@@ -471,6 +472,9 @@ logger.info("Server initializing", {
 });
 
 try {
+  // Pre-flight: ensure the Enrichment process exists in the target org
+  await ensureEnrichmentProcess(config);
+
   if (TRANSPORT_MODE === "stdio") {
     await startStdioServer();
   } else {
