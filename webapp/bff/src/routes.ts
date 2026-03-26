@@ -60,14 +60,10 @@ function parseSetupBody(req: Request): SetupConnectionInput {
   const body = req.body as Partial<SetupConnectionInput>;
 
   return {
-    platform: body.platform === "jira" ? "jira" : body.platform === "azure-devops" ? "azure-devops" : undefined,
     azureDevOpsOrg: normalizeOptionalString(body?.azureDevOpsOrg),
     azureDevOpsUrl: normalizeOptionalString(body?.azureDevOpsUrl),
     azureDevOpsProject: normalizeOptionalString(body?.azureDevOpsProject),
     azureDevOpsPat: normalizeOptionalString(body?.azureDevOpsPat),
-    jiraBaseUrl: normalizeOptionalString(body?.jiraBaseUrl),
-    jiraProject: normalizeOptionalString(body?.jiraProject),
-    jiraApiToken: normalizeOptionalString(body?.jiraApiToken),
   };
 }
 
@@ -103,8 +99,6 @@ function toConnectionHeaders(input: SetupConnectionInput): Record<string, string
   if (input.azureDevOpsOrg) headers["x-ado-org"] = input.azureDevOpsOrg;
   if (input.azureDevOpsUrl) headers["x-ado-url"] = input.azureDevOpsUrl;
   if (input.azureDevOpsPat) headers["x-ado-pat"] = input.azureDevOpsPat;
-  if (input.jiraBaseUrl) headers["x-jira-base-url"] = input.jiraBaseUrl;
-  if (input.jiraApiToken) headers["x-jira-api-token"] = input.jiraApiToken;
 
   return headers;
 }
@@ -150,33 +144,6 @@ async function validateAzureDevOpsConnection(url: string, project: string, pat: 
   }
 }
 
-async function validateJiraConnection(baseUrl: string, project: string, token: string): Promise<void> {
-  const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/rest/api/3/project/search?query=${encodeURIComponent(project)}`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/json",
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Jira validation failed (${response.status}). Check URL/project and PAT token.`);
-  }
-
-  let data: { values?: Array<{ key?: string; name?: string }> };
-  try {
-    data = (await response.json()) as { values?: Array<{ key?: string; name?: string }> };
-  } catch {
-    throw new Error("Jira validation failed: received an unexpected response. Check URL/project and PAT token.");
-  }
-
-  const found = data.values?.some(
-    (entry) => entry.key?.toLowerCase() === project.toLowerCase() || entry.name?.toLowerCase() === project.toLowerCase()
-  );
-  if (!found) {
-    throw new Error(`Jira project '${project}' was not found for this connection.`);
-  }
-}
-
 function parseMessageBody(req: Request): ChatRequestBody | undefined {
   const body = req.body as Partial<ChatRequestBody>;
   if (!body || typeof body.message !== "string") {
@@ -211,8 +178,6 @@ export function createApiRouter(config: AppConfig) {
         azureDevOpsOrg: state.azureDevOpsOrg,
         azureDevOpsUrl: state.azureDevOpsUrl,
         azureDevOpsPat: state.hasAzureDevOpsPat ? secrets.azureDevOpsPat : undefined,
-        jiraBaseUrl: state.jiraBaseUrl,
-        jiraApiToken: state.hasJiraApiToken ? secrets.jiraApiToken : undefined,
       })
     );
   }
@@ -243,23 +208,12 @@ export function createApiRouter(config: AppConfig) {
       const state = setupStore.save(body, userId);
       const secrets = setupStore.getSecrets(userId);
 
-      if (state.platform === "azure-devops") {
-        const url = getAzureDevOpsUrl(state.azureDevOpsOrg, state.azureDevOpsUrl);
-        if (!url || !state.azureDevOpsProject || !secrets.azureDevOpsPat) {
-          res.status(400).json({ error: "Azure DevOps URL/org, project name, and PAT token are required." });
-          return;
-        }
-        await validateAzureDevOpsConnection(url, state.azureDevOpsProject, secrets.azureDevOpsPat);
-      } else if (state.platform === "jira") {
-        if (!state.jiraBaseUrl || !state.jiraProject || !secrets.jiraApiToken) {
-          res.status(400).json({ error: "Jira URL, project name, and PAT token are required." });
-          return;
-        }
-        await validateJiraConnection(state.jiraBaseUrl, state.jiraProject, secrets.jiraApiToken);
-      } else {
-        res.status(400).json({ error: "Select a platform first (Azure DevOps or Jira)." });
+      const url = getAzureDevOpsUrl(state.azureDevOpsOrg, state.azureDevOpsUrl);
+      if (!url || !state.azureDevOpsProject || !secrets.azureDevOpsPat) {
+        res.status(400).json({ error: "Azure DevOps URL/org, project name, and PAT token are required." });
         return;
       }
+      await validateAzureDevOpsConnection(url, state.azureDevOpsProject, secrets.azureDevOpsPat);
 
       const validated = setupStore.markValidated(userId);
       res.json({ validated: true, state: validated });
@@ -356,16 +310,14 @@ export function createApiRouter(config: AppConfig) {
       const userId = getUserId(req);
       const setupState = setupStore.getState(userId);
       const secrets = setupStore.getSecrets(userId);
-      const hasConfiguredConnection = setupState.platform === "jira"
-        ? Boolean(setupState.jiraBaseUrl && setupState.jiraProject && secrets.jiraApiToken)
-        : Boolean((setupState.azureDevOpsOrg || setupState.azureDevOpsUrl) && setupState.azureDevOpsProject && secrets.azureDevOpsPat);
+      const hasConfiguredConnection = Boolean((setupState.azureDevOpsOrg || setupState.azureDevOpsUrl) && setupState.azureDevOpsProject && secrets.azureDevOpsPat);
 
       if (!setupState.isValidated && !hasConfiguredConnection) {
         res.status(400).json({ error: "Connection must be validated before creating backlog items." });
         return;
       }
 
-      const effectiveProject = processRequest.project ?? (setupState.platform === "jira" ? setupState.jiraProject : setupState.azureDevOpsProject);
+      const effectiveProject = processRequest.project ?? setupState.azureDevOpsProject;
       if (!effectiveProject) {
         res.status(400).json({ error: "Project is required. Validate your platform connection first." });
         return;
@@ -400,15 +352,13 @@ export function createApiRouter(config: AppConfig) {
         { toolName: "create_backlog", args: { processFileName: fileName, project: effectiveProject, storyMaturity: "placeholder" } },
       ]);
 
-      const boardUrl = setupState.platform === "jira"
-        ? `${setupState.jiraBaseUrl?.replace(/\/+$/, "")}/jira/software/c/projects/${encodeURIComponent(effectiveProject)}/boards`
-        : `${getAzureDevOpsUrl(setupState.azureDevOpsOrg, setupState.azureDevOpsUrl)}/${encodeURIComponent(effectiveProject)}/_backlogs/backlog`;
+      const boardUrl = `${getAzureDevOpsUrl(setupState.azureDevOpsOrg, setupState.azureDevOpsUrl)}/${encodeURIComponent(effectiveProject)}/_backlogs/backlog`;
 
       res.json({
         reply: `Document '${fileName}' processed and backlog creation executed for project '${effectiveProject}'.`,
         data: {
           executedTools: ["analyse_document", "preview_backlog", "create_backlog"],
-          platform: setupState.platform,
+          platform: "azure-devops" as const,
           project: effectiveProject,
           boardUrl,
           review,

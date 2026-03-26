@@ -261,7 +261,7 @@ export function estimateEffort(item: EnrichmentWorkItem, dependencyCount: number
   const criteriaCount = item.acceptanceCriteria.length;
   let points = criteriaCount * 8 + dependencyCount * 10;
 
-  if (/(integration|api|webhook|external|jira|azure devops|cross-system)/.test(text)) points += 18;
+  if (/(integration|api|webhook|external|azure devops|cross-system)/.test(text)) points += 18;
   if (/(frontend|ui|screen)/.test(text) && /(backend|service|api)/.test(text)) points += 14;
   if (/(data|migration|schema|database)/.test(text)) points += 12;
   if (/(complex|orchestrat|workflow|automation)/.test(text)) points += 10;

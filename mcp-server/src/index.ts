@@ -10,7 +10,6 @@ import { isInitializeRequest, ListToolsRequestSchema, CallToolRequestSchema } fr
 import { Config, loadConfig } from "./config.js";
 import { logger } from "./logger.js";
 import { AzureDevOpsClient } from "./azureDevOpsClient.js";
-import { JiraClient } from "./jiraClient.js";
 import { workItemTools, handleWorkItemTool, getFileStore } from "./tools/workItems.js";
 import { ensureEnrichmentProcess } from "./processMigration.js";
 
@@ -22,11 +21,9 @@ const CORS_ALLOWED_ORIGIN = process.env.CORS_ALLOWED_ORIGIN || "";
 // Initialize config and Azure DevOps client
 const config = loadConfig();
 const azureDevOpsClient = config.azureDevOps ? new AzureDevOpsClient(config) : undefined;
-const jiraClient = config.jira ? new JiraClient(config.jira) : undefined;
 
 interface WorkItemClients {
   azureDevOpsClient?: AzureDevOpsClient;
-  jiraClient?: JiraClient;
 }
 
 function normalizeHeaderValue(value: string | string[] | undefined): string | undefined {
@@ -40,11 +37,6 @@ function resolveClientsFromHeaders(req: Request): WorkItemClients {
   const adoUrl = normalizeHeaderValue(req.headers["x-ado-url"] as string | string[] | undefined) ?? config.azureDevOps?.url;
   const adoPat = normalizeHeaderValue(req.headers["x-ado-pat"] as string | string[] | undefined) ?? config.azureDevOps?.pat;
 
-  const jiraBaseUrl = normalizeHeaderValue(req.headers["x-jira-base-url"] as string | string[] | undefined) ?? config.jira?.baseUrl;
-  const jiraEmail = normalizeHeaderValue(req.headers["x-jira-email"] as string | string[] | undefined) ?? config.jira?.email;
-  const jiraApiToken = normalizeHeaderValue(req.headers["x-jira-api-token"] as string | string[] | undefined) ?? config.jira?.apiToken;
-  const jiraAuthTypeRaw = normalizeHeaderValue(req.headers["x-jira-auth-type"] as string | string[] | undefined) ?? config.jira?.authType;
-
   const mergedConfig: Config = { enrichment: config.enrichment };
   if (adoOrg && adoUrl && adoPat) {
     mergedConfig.azureDevOps = {
@@ -54,23 +46,8 @@ function resolveClientsFromHeaders(req: Request): WorkItemClients {
     };
   }
 
-  if (jiraBaseUrl && jiraEmail && jiraApiToken) {
-    const normalizedAuthType = jiraAuthTypeRaw?.toLowerCase() === "bearer" ? "bearer" : "basic";
-    mergedConfig.jira = {
-      baseUrl: jiraBaseUrl,
-      email: jiraEmail,
-      apiToken: jiraApiToken,
-      authType: normalizedAuthType,
-      apiVersion: config.jira?.apiVersion,
-      epicNameFieldId: config.jira?.epicNameFieldId,
-      epicLinkFieldId: config.jira?.epicLinkFieldId,
-      hierarchyLinkType: config.jira?.hierarchyLinkType,
-    };
-  }
-
   return {
     azureDevOpsClient: mergedConfig.azureDevOps ? new AzureDevOpsClient(mergedConfig) : undefined,
-    jiraClient: mergedConfig.jira ? new JiraClient(mergedConfig.jira) : undefined,
   };
 }
 
@@ -460,7 +437,7 @@ async function startHttpServer() {
 
 // Stdio Transport for local CLI usage
 async function startStdioServer() {
-  const server = createMcpServer({ azureDevOpsClient, jiraClient });
+  const server = createMcpServer({ azureDevOpsClient });
   const transport = new StdioServerTransport();
   logger.info("Connecting via stdio transport");
   await server.connect(transport);

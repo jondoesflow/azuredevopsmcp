@@ -6,34 +6,23 @@ This guide is focused on the **user journey in the app UI**.
 
 Open the app and sign in. After sign-in, you will see the backlog assistant home screen.
 
-## 1) Choose your platform
+## 1) Save and validate connection
 
-In **Step 2: Choose platform**, click one:
+In **Step 1: Enter connection details**:
 
-- **Azure DevOps**
-- **Jira**
-
-What to expect:
-
-- If a saved profile exists, you will see **Saved connection found** with options to confirm or edit.
-- If not, continue to Step 3 and enter details.
-
-## 2) Save and validate connection
-
-In **Step 3: Enter connection details**:
-
-1. Enter URL, project, and token for your selected platform.
+1. Enter URL, project, and PAT token for Azure DevOps.
 2. Click **Save details**.
 3. Click **Validate connection**.
 
 What to expect:
 
+- If a saved profile exists, you will see **Saved connection found** with options to confirm or edit.
 - Inline spinner while save/validation runs.
 - A **Successfully Validated** confirmation modal when validation succeeds.
 
-## 3) Upload file
+## 2) Upload file
 
-In **Step 5: Upload + analysis**:
+In **Step 2: Upload + analysis**:
 
 1. Upload one `.txt` file.
 2. Confirm the file appears in the file list.
@@ -43,7 +32,7 @@ What to expect:
 - Inline spinner while upload runs.
 - Terminal logs showing upload progress and completion.
 
-## 4) Create backlog
+## 3) Create backlog
 
 1. Select **Analysis mode** (`to-be process` or `transcript`).
 2. Click **Create Backlog**.
@@ -52,10 +41,10 @@ What to expect:
 
 - Inline spinner for backlog creation.
 - Terminal progress logs.
-- Rotating “fact” message during longer processing.
+- Rotating "fact" message during longer processing.
 - Success status message when complete.
 
-## 5) Manage uploaded files
+## 4) Manage uploaded files
 
 Use:
 

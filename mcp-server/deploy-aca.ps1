@@ -110,48 +110,6 @@ $adoPat = Get-EnvOrPrompt -Name 'AZURE_DEVOPS_PAT' -Prompt 'AZURE_DEVOPS_PAT' -S
 
 $mcpApiKey = Get-EnvOrPrompt -Name 'MCP_API_KEY' -Prompt 'MCP_API_KEY' -Secret
 
-# Jira is optional, but if any Jira env var is set we require the trio.
-$jiraBaseUrl = [System.Environment]::GetEnvironmentVariable('JIRA_BASE_URL', 'Process')
-if ([string]::IsNullOrWhiteSpace($jiraBaseUrl)) {
-  $jiraBaseUrl = [System.Environment]::GetEnvironmentVariable('JIRA_URL', 'Process')
-}
-
-$jiraEmail = [System.Environment]::GetEnvironmentVariable('JIRA_EMAIL', 'Process')
-$jiraUsername = [System.Environment]::GetEnvironmentVariable('JIRA_USERNAME', 'Process')
-
-$jiraToken = [System.Environment]::GetEnvironmentVariable('JIRA_API_TOKEN', 'Process')
-if ([string]::IsNullOrWhiteSpace($jiraToken)) {
-  $jiraToken = [System.Environment]::GetEnvironmentVariable('JIRA_PAT', 'Process')
-}
-
-$jiraEpicNameFieldId = [System.Environment]::GetEnvironmentVariable('JIRA_EPIC_NAME_FIELD_ID', 'Process')
-$jiraEpicLinkFieldId = [System.Environment]::GetEnvironmentVariable('JIRA_EPIC_LINK_FIELD_ID', 'Process')
-$jiraHierarchyLinkType = [System.Environment]::GetEnvironmentVariable('JIRA_HIERARCHY_LINK_TYPE', 'Process')
-$jiraAuthType = [System.Environment]::GetEnvironmentVariable('JIRA_AUTH_TYPE', 'Process')
-$jiraApiVersion = [System.Environment]::GetEnvironmentVariable('JIRA_API_VERSION', 'Process')
-
-$jiraEnabled = -not [string]::IsNullOrWhiteSpace($jiraBaseUrl)
-if ($jiraEnabled) {
-  if ([string]::IsNullOrWhiteSpace($jiraEmail) -and [string]::IsNullOrWhiteSpace($jiraUsername)) {
-    # For Jira Server/DC, username is often required; for Jira Cloud, email is common.
-    $jiraUsername = Get-EnvOrPrompt -Name 'JIRA_USERNAME' -Prompt 'JIRA_USERNAME (or set JIRA_EMAIL instead)'
-  }
-  if ([string]::IsNullOrWhiteSpace($jiraToken)) {
-    $jiraToken = Get-EnvOrPrompt -Name 'JIRA_API_TOKEN' -Prompt 'JIRA_API_TOKEN' -Secret
-  }
-  if ([string]::IsNullOrWhiteSpace($jiraEpicLinkFieldId)) {
-    $jiraEpicLinkFieldId = (Read-Host 'JIRA_EPIC_LINK_FIELD_ID (e.g. customfield_10001) (optional)').Trim()
-  }
-  if ([string]::IsNullOrWhiteSpace($jiraHierarchyLinkType)) {
-    $jiraHierarchyLinkType = 'Relates'
-  }
-
-  # Optional; used for Jira auth mode differences (Basic vs Bearer)
-  if ([string]::IsNullOrWhiteSpace($jiraAuthType)) {
-    $jiraAuthType = ''
-  }
-}
-
 $registryServer = "$AcrName.azurecr.io"
 # NOTE: In PowerShell, a colon immediately after a variable (e.g. $ImageName:$Tag)
 # is parsed like a drive-scoped variable reference. Use ${} to delimit.
@@ -203,9 +161,6 @@ $secretsArgs = @(
   "ado-pat=$adoPat",
   "mcp-api-key=$mcpApiKey"
 )
-if ($jiraEnabled) {
-  $secretsArgs += "jira-api-token=$jiraToken"
-}
 
 az containerapp secret set -n $ContainerAppName -g $ResourceGroup --secrets @secretsArgs 1>$null
 
@@ -219,39 +174,6 @@ $setEnvArgs = @(
   "PORT=80",
   "TRANSPORT_MODE=http"
 )
-
-if ($jiraEnabled) {
-  $setEnvArgs += "JIRA_BASE_URL=$jiraBaseUrl"
-  $setEnvArgs += "JIRA_API_TOKEN=secretref:jira-api-token"
-
-  # Keep whichever identity fields are supplied. Do NOT map username into JIRA_EMAIL.
-  if (-not [string]::IsNullOrWhiteSpace($jiraEmail)) {
-    $setEnvArgs += "JIRA_EMAIL=$jiraEmail"
-  }
-  if (-not [string]::IsNullOrWhiteSpace($jiraUsername)) {
-    $setEnvArgs += "JIRA_USERNAME=$jiraUsername"
-  }
-
-  if (-not [string]::IsNullOrWhiteSpace($jiraAuthType)) {
-    $setEnvArgs += "JIRA_AUTH_TYPE=$jiraAuthType"
-  }
-
-  if (-not [string]::IsNullOrWhiteSpace($jiraApiVersion)) {
-    $setEnvArgs += "JIRA_API_VERSION=$jiraApiVersion"
-  }
-
-  if (-not [string]::IsNullOrWhiteSpace($jiraEpicNameFieldId)) {
-    $setEnvArgs += "JIRA_EPIC_NAME_FIELD_ID=$jiraEpicNameFieldId"
-  }
-
-  if (-not [string]::IsNullOrWhiteSpace($jiraEpicLinkFieldId)) {
-    $setEnvArgs += "JIRA_EPIC_LINK_FIELD_ID=$jiraEpicLinkFieldId"
-  }
-
-  if (-not [string]::IsNullOrWhiteSpace($jiraHierarchyLinkType)) {
-    $setEnvArgs += "JIRA_HIERARCHY_LINK_TYPE=$jiraHierarchyLinkType"
-  }
-}
 
 az containerapp update -n $ContainerAppName -g $ResourceGroup --set-env-vars @setEnvArgs 1>$null
 

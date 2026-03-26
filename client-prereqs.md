@@ -44,8 +44,6 @@ Provide/approve values for:
 - `PORT`
 - `TRANSPORT_MODE`
 
-If Jira parity is in scope, also provide Jira config values (base URL, auth mode, API token, and Jira-specific field IDs).
-
 ## 6) Copilot Studio Configuration Prereqs
 - Agent created with MCP tool connection.
 - MCP connector configured with:

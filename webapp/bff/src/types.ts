@@ -28,25 +28,17 @@ export interface ChatRequestBody {
 }
 
 export interface SetupConnectionInput {
-  platform?: "azure-devops" | "jira";
   azureDevOpsOrg?: string;
   azureDevOpsUrl?: string;
   azureDevOpsProject?: string;
   azureDevOpsPat?: string;
-  jiraBaseUrl?: string;
-  jiraProject?: string;
-  jiraApiToken?: string;
 }
 
 export interface SetupConnectionState {
-  platform?: "azure-devops" | "jira";
   azureDevOpsOrg?: string;
   azureDevOpsUrl?: string;
   azureDevOpsProject?: string;
-  jiraBaseUrl?: string;
-  jiraProject?: string;
   hasAzureDevOpsPat: boolean;
-  hasJiraApiToken: boolean;
   isValidated: boolean;
 }
 

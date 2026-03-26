@@ -1,6 +1,5 @@
 import { AzureDevOpsClient } from "../azureDevOpsClient.js";
 import { logger } from "../logger.js";
-import { JiraClient } from "../jiraClient.js";
 import { enrichGeneratedWorkItems } from "./enrichment/orchestrator.js";
 import {
   EnrichmentFlags,
@@ -64,43 +63,6 @@ async function persistAdoDependencies(
   return linkCount;
 }
 
-async function persistJiraDependencies(
-  jira: JiraClient,
-  preview: StoredPreview | undefined,
-  storyKeyByPreviewId: Map<string, string>
-): Promise<number> {
-  if (!preview) return 0;
-
-  let linkCount = 0;
-  for (const item of preview.items) {
-    const sourceKey = storyKeyByPreviewId.get(item.id);
-    if (!sourceKey) continue;
-    const dependency = item.enrichment?.dependencies;
-    if (!dependency) continue;
-
-    for (const depId of dependency.dependsOn) {
-      const targetKey = storyKeyByPreviewId.get(depId);
-      if (!targetKey || targetKey === sourceKey) continue;
-
-      try {
-        await jira.createIssueLink({
-          parentKey: targetKey,
-          childKey: sourceKey,
-          linkTypeName: "Blocks",
-        });
-        linkCount++;
-      } catch (error) {
-        logger.warn("Unable to persist Jira dependency relation", {
-          sourceKey,
-          targetKey,
-          error: String(error),
-        });
-      }
-    }
-  }
-
-  return linkCount;
-}
 
 function getPreviewStoreKey(fileName: string): string {
   return `__preview_${fileName}`;
@@ -275,10 +237,6 @@ function handlePreviewBacklog(input: ToolInput): string {
   });
 }
 
-function jiraDescriptionToText(raw: unknown): string {
-  return typeof raw === "string" ? raw : "";
-}
-
 function appendAcceptanceCriteriaBlock(description: string, criteria: string[] | undefined): string {
   const items = (criteria ?? []).map((c) => c.trim()).filter(Boolean);
   if (items.length === 0) return description;
@@ -288,32 +246,13 @@ function appendAcceptanceCriteriaBlock(description: string, criteria: string[] |
   return lines.join("\n");
 }
 
-function requireJiraKey(raw: unknown, fieldName: string): string {
-  const value = typeof raw === "string" ? raw.trim() : "";
-  if (!value) {
-    throw new Error(`For Jira, provide ${fieldName} (e.g. 'ABC-123').`);
-  }
-  return value;
-}
-
 type AnalysisMode = "themes" | "process";
 type StoryMaturity = "placeholder" | "detailed";
-type TargetSystem = "azuredevops" | "jira";
-
 interface RubricAssessment {
   id: string;
   name: string;
   mentions: number;
   signals: string[];
-}
-
-function parseTargetSystem(raw: unknown): TargetSystem {
-  const lowered = typeof raw === "string" ? raw.trim().toLowerCase() : "";
-  if (lowered === "jira") return "jira";
-  if (lowered === "ado" || lowered === "azure" || lowered === "azuredevops" || lowered === "azure devops") {
-    return "azuredevops";
-  }
-  return "azuredevops";
 }
 
 interface ProcessStep {
@@ -505,7 +444,6 @@ function buildProvenanceHtml(info: ProvenanceInfo): string {
 
 function buildProvenanceText(info: ProvenanceInfo): string {
   const excerptPart = info.excerpt ? ` — "${toSingleLine(info.excerpt)}"` : "";
-  // Jira Wiki-style italics
   return `_Source: ${info.sourceFileName} (${info.sourceType}) — ${info.reference}${excerptPart}_`;
 }
 
@@ -536,13 +474,9 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        targetSystem: {
-          type: "string",
-          description: "Target system: 'azuredevops' (default) or 'jira'.",
-        },
         project: {
           type: "string",
-          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
+          description: "Azure DevOps project name.",
         },
         state: {
           type: "string",
@@ -567,21 +501,13 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        targetSystem: {
-          type: "string",
-          description: "Target system: 'azuredevops' (default) or 'jira'.",
-        },
         project: {
           type: "string",
-          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
+          description: "Azure DevOps project name.",
         },
         epic: {
           type: "number",
           description: "Parent epic ID.",
-        },
-        epicKey: {
-          type: "string",
-          description: "Parent epic key (Jira only), e.g. 'ABC-123'.",
         },
         state: {
           type: "string",
@@ -602,21 +528,13 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        targetSystem: {
-          type: "string",
-          description: "Target system: 'azuredevops' (default) or 'jira'.",
-        },
         project: {
           type: "string",
-          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
+          description: "Azure DevOps project name.",
         },
         feature: {
           type: "number",
           description: "Parent feature ID.",
-        },
-        featureKey: {
-          type: "string",
-          description: "Parent feature key (Jira only) i.e. Jira issue type 'New Feature', e.g. 'ABC-123'.",
         },
         state: {
           type: "string",
@@ -641,21 +559,13 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        targetSystem: {
-          type: "string",
-          description: "Target system: 'azuredevops' (default) or 'jira'.",
-        },
         project: {
           type: "string",
-          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
+          description: "Azure DevOps project name.",
         },
         userStoryId: {
           type: "number",
           description: "User story ID.",
-        },
-        userStoryKey: {
-          type: "string",
-          description: "User story key (Jira only), e.g. 'ABC-123'.",
         },
       },
       required: ["project"],
@@ -667,21 +577,13 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        targetSystem: {
-          type: "string",
-          description: "Target system: 'azuredevops' (default) or 'jira'.",
-        },
         project: {
           type: "string",
-          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
+          description: "Azure DevOps project name.",
         },
         userStoryId: {
           type: "number",
           description: "User story ID.",
-        },
-        userStoryKey: {
-          type: "string",
-          description: "User story key (Jira only), e.g. 'ABC-123'.",
         },
         criteria: {
           type: "array",
@@ -700,21 +602,13 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        targetSystem: {
-          type: "string",
-          description: "Target system: 'azuredevops' (default) or 'jira'.",
-        },
         project: {
           type: "string",
-          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
+          description: "Azure DevOps project name.",
         },
         userStory: {
           type: "number",
           description: "Parent user story ID.",
-        },
-        userStoryKey: {
-          type: "string",
-          description: "Parent user story key (Jira only), e.g. 'ABC-123'.",
         },
         state: {
           type: "string",
@@ -739,13 +633,9 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        targetSystem: {
-          type: "string",
-          description: "Target system: 'azuredevops' (default) or 'jira'.",
-        },
         project: {
           type: "string",
-          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
+          description: "Azure DevOps project name.",
         },
         title: {
           type: "string",
@@ -769,13 +659,9 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        targetSystem: {
-          type: "string",
-          description: "Target system: 'azuredevops' (default) or 'jira'.",
-        },
         project: {
           type: "string",
-          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
+          description: "Azure DevOps project name.",
         },
         title: {
           type: "string",
@@ -789,10 +675,6 @@ export const workItemTools: Tool[] = [
           type: "number",
           description: "Parent epic ID.",
         },
-        epicKey: {
-          type: "string",
-          description: "Parent epic key (Jira only), e.g. 'ABC-123'.",
-        },
       },
       required: ["project", "title"],
     },
@@ -803,13 +685,9 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        targetSystem: {
-          type: "string",
-          description: "Target system: 'azuredevops' (default) or 'jira'.",
-        },
         project: {
           type: "string",
-          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
+          description: "Azure DevOps project name.",
         },
         title: {
           type: "string",
@@ -822,10 +700,6 @@ export const workItemTools: Tool[] = [
         featureId: {
           type: "number",
           description: "Parent feature ID.",
-        },
-        featureKey: {
-          type: "string",
-          description: "Parent feature key (Jira only) i.e. Jira issue type 'New Feature', e.g. 'ABC-123'.",
         },
         acceptanceCriteria: {
           type: "array",
@@ -844,13 +718,9 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        targetSystem: {
-          type: "string",
-          description: "Target system: 'azuredevops' (default) or 'jira'.",
-        },
         project: {
           type: "string",
-          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
+          description: "Azure DevOps project name.",
         },
         title: {
           type: "string",
@@ -863,10 +733,6 @@ export const workItemTools: Tool[] = [
         userStoryId: {
           type: "number",
           description: "Parent user story ID.",
-        },
-        userStoryKey: {
-          type: "string",
-          description: "Parent user story key (Jira only), e.g. 'ABC-123'.",
         },
         assignedTo: {
           type: "string",
@@ -1011,7 +877,7 @@ export const workItemTools: Tool[] = [
   },
   {
     name: "preview_backlog",
-    description: "Builds backlog stories from a previously analysed document, applies optional enrichment, and returns review data without creating ADO/Jira work items.",
+    description: "Builds backlog stories from a previously analysed document, applies optional enrichment, and returns review data without creating ADO work items.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1041,10 +907,6 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        targetSystem: {
-          type: "string",
-          description: "Target system for created work items: 'azuredevops' (default) or 'jira'.",
-        },
         fileName: {
           type: "string",
           description: "Legacy analysed file name. Backward compatible alias when processFileName is not provided.",
@@ -1070,7 +932,7 @@ export const workItemTools: Tool[] = [
         },
         project: {
           type: "string",
-          description: "Target project identifier. For Azure DevOps: project name. For Jira: project key (e.g., 'ABC').",
+          description: "Azure DevOps project name.",
         },
         areaPath: {
           type: "string",
@@ -1086,21 +948,13 @@ export const workItemTools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        targetSystem: {
-          type: "string",
-          description: "Target system: 'azuredevops' (default) or 'jira'.",
-        },
         project: {
           type: "string",
-          description: "Project identifier. For Azure DevOps: project name. For Jira: project key.",
+          description: "Azure DevOps project name.",
         },
         workItemId: {
           type: "number",
           description: "Work item ID.",
-        },
-        workItemKey: {
-          type: "string",
-          description: "Work item key (Jira only), e.g. 'ABC-123'.",
         },
         state: {
           type: "string",
@@ -1122,22 +976,16 @@ export const workItemTools: Tool[] = [
 
 interface ToolInput {
   project: string;
-  targetSystem?: string;
   analysisMode?: AnalysisMode;
   iterationPath?: string;
   areaPath?: string;
   state?: string;
   assignedTo?: string;
   epic?: number;
-  epicKey?: string;
   feature?: number;
-  featureKey?: string;
   userStory?: number;
-  userStoryKey?: string;
   top?: number;
   userStoryId?: number;
-  // Alias used by update_work_item and others in Jira mode
-  workItemKey?: string;
   title?: string;
   description?: string;
   epicId?: number;
@@ -1163,7 +1011,6 @@ interface ToolInput {
 
 interface WorkItemClients {
   azureDevOpsClient?: AzureDevOpsClient;
-  jiraClient?: JiraClient;
 }
 
 function requireAzureClient(clients: WorkItemClients): AzureDevOpsClient {
@@ -1171,13 +1018,6 @@ function requireAzureClient(clients: WorkItemClients): AzureDevOpsClient {
     throw new Error("Azure DevOps client is not configured on this server. Set AZURE_DEVOPS_ORG, AZURE_DEVOPS_PAT, and AZURE_DEVOPS_URL.");
   }
   return clients.azureDevOpsClient;
-}
-
-function requireJiraClient(clients: WorkItemClients): JiraClient {
-  if (!clients.jiraClient) {
-    throw new Error("Jira client is not configured on this server. Set JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN.");
-  }
-  return clients.jiraClient;
 }
 
 // --- Extracted handlers to reduce cognitive complexity of handleWorkItemTool ---
@@ -1893,32 +1733,6 @@ function applyAdoEnrichment(
   };
 }
 
-function applyJiraEnrichment(
-  description: string,
-  acceptanceCriteria: string[],
-  labels: string[] | undefined,
-  enrichment: WorkItemEnrichment | undefined
-): { description: string; acceptanceCriteria: string[]; labels: string[] } {
-  if (!enrichment) {
-    return { description, acceptanceCriteria, labels: labels ?? [] };
-  }
-
-  const mergedCriteria = appendUnique(acceptanceCriteria, enrichment.definitionOfDone ?? []);
-  const mergedDescription = `${description}${buildEnrichmentSummaryText(enrichment)}`;
-
-  const baseLabels = labels ?? [];
-  const enrichmentLabels = [
-    enrichment.effort ? `effort-${toEnrichmentLabelToken(enrichment.effort.tshirtSize)}` : undefined,
-    enrichment.qualityScore ? `quality-${enrichment.qualityScore.score >= 80 ? "high" : enrichment.qualityScore.score >= 60 ? "medium" : "low"}` : undefined,
-    enrichment.consistencyIssues && enrichment.consistencyIssues.length > 0 ? "consistency-check" : undefined,
-  ].filter((item): item is string => Boolean(item));
-
-  return {
-    description: mergedDescription,
-    acceptanceCriteria: mergedCriteria,
-    labels: appendUnique(baseLabels, enrichmentLabels),
-  };
-}
 
 function parseStoredPreview(rawContent: string): StoredPreview | undefined {
   try {
@@ -2414,247 +2228,7 @@ async function handleCreateBacklogFromProcess(
   });
 }
 
-async function handleCreateBacklogJira(jira: JiraClient, input: ToolInput): Promise<string> {
-  const backlogStore = getFileStore();
-  const analysisFileName = input.processFileName || input.fileName;
-  if (!analysisFileName) {
-    return JSON.stringify({
-      result: "error",
-      message: "Provide processFileName (preferred) or fileName after analyse_document.",
-    });
-  }
 
-  const backlogCached = backlogStore.get(`__analysis_${analysisFileName}`);
-  if (!backlogCached) {
-    return JSON.stringify({ result: "error", message: "No analysis found. Call analyse_document first." });
-  }
-
-  const storedAnalysis = parseStoredAnalysis(backlogCached.content);
-  let preview = parseStoredPreview(backlogStore.get(getPreviewStoreKey(analysisFileName))?.content ?? "");
-  if (!preview) {
-    handlePreviewBacklog(input);
-    preview = parseStoredPreview(backlogStore.get(getPreviewStoreKey(analysisFileName))?.content ?? "");
-  }
-  const projectKey = input.project;
-
-  if (storedAnalysis.analysisMode === "process") {
-    return handleCreateBacklogFromProcessJira(jira, input, storedAnalysis, analysisFileName, projectKey);
-  }
-
-  const themes: Record<string, { mentions: number; subtopics: string[] }> = storedAnalysis.themes ?? {};
-  const sourceContent = backlogStore.get(input.fileName || analysisFileName)?.content ?? "";
-  const persona = detectPersonaFromTranscript(sourceContent);
-  const extraAcceptanceCriteria = buildRubricAcceptanceCriteria(storedAnalysis.rubrics);
-
-  let epicCount = 0;
-  let storyCount = 0;
-  const storyKeyByPreviewId = new Map<string, string>();
-
-  for (const [themeName, themeData] of Object.entries(themes)) {
-    const epicSummary = themeName;
-    const existingEpic = await jira.findIssueBySummary(projectKey, "Epic", epicSummary);
-    const epic = existingEpic
-      ?? await jira.createIssue({
-        projectKey,
-        issueType: "Epic",
-        summary: epicSummary,
-        description: `${themeName}\n\nCreated from analysed transcript themes.`,
-        labels: ["mcp", "backlog", "themes"],
-      });
-    if (!existingEpic) epicCount++;
-
-    const uniqueSubtopics = Array.from(new Set(themeData.subtopics));
-    for (const subtopic of uniqueSubtopics) {
-      const storySummary = `Implement ${subtopic}`;
-      const existingStory = await jira.findIssueBySummary(projectKey, "Story", storySummary);
-      if (existingStory) continue;
-
-      const provenance: ProvenanceInfo = {
-        sourceFileName: analysisFileName,
-        sourceType: "transcript",
-        reference: `Theme: ${themeName}; Subtopic: ${subtopic}`,
-        excerpt: selectBestExcerpt(sourceContent, [subtopic, themeName]),
-      };
-
-      const description = [
-        "User Story",
-        `As a ${persona}, I need the ability to utilise ${subtopic.toLowerCase()} so that I can effectively manage ${themeName.toLowerCase()} processes and workflows.`,
-        "",
-        `Context: Theme: ${themeName}`,
-        "",
-        "Acceptance Criteria:",
-        ...[...buildGherkinCriteria(subtopic, themeName, persona), ...extraAcceptanceCriteria].map((c) => `- ${c}`),
-        "",
-        buildProvenanceText(provenance),
-      ].join("\n");
-
-      const enrichedPayload = applyJiraEnrichment(
-        description,
-        [...buildGherkinCriteria(subtopic, themeName, persona), ...extraAcceptanceCriteria],
-        ["mcp", "backlog", "themes"],
-        findEnrichmentForTitle(preview, storySummary)
-      );
-
-      const createdStory = await jira.createIssue({
-        projectKey,
-        issueType: "Story",
-        summary: storySummary,
-        description: enrichedPayload.description,
-        epicKey: epic.key,
-        labels: enrichedPayload.labels,
-      });
-      const previewItemId = preview?.items.find((item) => normaliseTitle(item.title) === normaliseTitle(storySummary))?.id;
-      if (previewItemId) {
-        storyKeyByPreviewId.set(previewItemId, createdStory.key);
-      }
-      storyCount++;
-    }
-  }
-
-  const dependencyLinks = await persistJiraDependencies(jira, preview, storyKeyByPreviewId);
-
-  return JSON.stringify({
-    result: "success",
-    targetSystem: "jira",
-    analysisMode: "themes",
-    epics: epicCount,
-    userStories: storyCount,
-    dependencyLinks,
-  });
-}
-
-async function handleCreateBacklogFromProcessJira(
-  jira: JiraClient,
-  input: ToolInput,
-  analysis: StoredAnalysis,
-  analysisFileName: string,
-  projectKey: string
-): Promise<string> {
-  const backlogStore = getFileStore();
-  let preview = parseStoredPreview(backlogStore.get(getPreviewStoreKey(analysisFileName))?.content ?? "");
-  if (!preview) {
-    handlePreviewBacklog(input);
-    preview = parseStoredPreview(backlogStore.get(getPreviewStoreKey(analysisFileName))?.content ?? "");
-  }
-  const processStages = analysis.processStages ?? [];
-  const processContent = backlogStore.get(analysisFileName)?.content ?? "";
-  if (processStages.length === 0) {
-    return JSON.stringify({ result: "error", message: "No process stages found. Re-run analyse_document with analysisMode='process'." });
-  }
-
-  const evidenceFileName = input.evidenceFileName || input.fileName;
-  const evidenceContent = evidenceFileName ? backlogStore.get(evidenceFileName)?.content ?? "" : "";
-  const storyMaturity: StoryMaturity = input.storyMaturity === "detailed" ? "detailed" : "placeholder";
-  const designReferences = (input.designReferences ?? []).filter((item) => item.trim().length > 0);
-  const extraAcceptanceCriteria = buildRubricAcceptanceCriteria(analysis.rubrics);
-
-  let epicCount = 0;
-  let storyCount = 0;
-  const storyKeyByPreviewId = new Map<string, string>();
-
-  for (const stage of processStages) {
-    const epicSummary = stage.title;
-    const existingEpic = await jira.findIssueBySummary(projectKey, "Epic", epicSummary);
-    const epic = existingEpic
-      ?? await jira.createIssue({
-        projectKey,
-        issueType: "Epic",
-        summary: epicSummary,
-        description: `${stage.title}\n\nTo-Be process stage (process-first discovery).`,
-        labels: ["mcp", "backlog", "process"],
-      });
-    if (!existingEpic) epicCount++;
-
-    const uniqueSteps = Array.from(new Map(stage.steps.map((step) => [normaliseTitle(step.title), step])).values());
-    for (const step of uniqueSteps) {
-      const persona = getBestPersona(step.role, evidenceContent);
-      const evidenceSnippets = selectEvidenceSnippets(evidenceContent, step.evidenceTerms);
-
-      const provenance: ProvenanceInfo = {
-        sourceFileName: analysisFileName,
-        sourceType: "process",
-        reference: `Stage: ${stage.title}; Step: ${step.title}`,
-        excerpt: selectBestExcerpt(processContent, [step.title, stage.title]),
-      };
-
-      const storySummary = storyMaturity === "placeholder"
-        ? `Discovery placeholder: ${step.title}`
-        : `Implement ${step.title}`;
-
-      const existingStory = await jira.findIssueBySummary(projectKey, "Story", storySummary);
-      if (existingStory) continue;
-
-      const description = storyMaturity === "placeholder"
-        ? [
-          "Discovery placeholder story",
-          `As a ${persona}, I need clarity on ${step.title} in stage ${stage.title}, so that fit-gap and design decisions can be completed before implementation.`,
-          "",
-          "Status: Fit-gap assessment: Unassessed",
-          "",
-          "Provenance snippets:",
-          ...(evidenceSnippets.length > 0 ? evidenceSnippets.map((s) => `- ${s}`) : ["- (none linked)"]),
-          "",
-          "Design references:",
-          ...(designReferences.length > 0 ? designReferences.map((r) => `- ${r}`) : ["- (to be linked)"]),
-          "",
-          buildProvenanceText(provenance),
-        ].join("\n")
-        : [
-          "User Story",
-          `As a ${persona}, I need the ability to utilise ${step.title.toLowerCase()} from within the system, so that I can effectively manage ${stage.title.toLowerCase()} processes and workflows.`,
-          "",
-          `Context: Stage: ${stage.title}`,
-          "",
-          "Acceptance Criteria:",
-          ...[...buildGherkinCriteria(step.title, stage.title, persona), ...extraAcceptanceCriteria].map((c) => `- ${c}`),
-          "",
-          buildProvenanceText(provenance),
-        ].join("\n");
-
-      const acceptanceCriteriaForEnrichment = storyMaturity === "placeholder"
-        ? [
-          "Given fit-gap analysis has not yet been completed",
-          "When the BA/FC reviews this placeholder with stakeholders",
-          "Then the requirement intent, constraints, and outcomes are clarified",
-          "And linked design references are identified before implementation starts",
-        ]
-        : [...buildGherkinCriteria(step.title, stage.title, persona), ...extraAcceptanceCriteria];
-
-      const enrichedPayload = applyJiraEnrichment(
-        description,
-        acceptanceCriteriaForEnrichment,
-        ["mcp", "backlog", "process"],
-        findEnrichmentForTitle(preview, storySummary)
-      );
-
-      const createdStory = await jira.createIssue({
-        projectKey,
-        issueType: "Story",
-        summary: storySummary,
-        description: enrichedPayload.description,
-        epicKey: epic.key,
-        labels: enrichedPayload.labels,
-      });
-      const previewItemId = preview?.items.find((item) => normaliseTitle(item.title) === normaliseTitle(storySummary))?.id;
-      if (previewItemId) {
-        storyKeyByPreviewId.set(previewItemId, createdStory.key);
-      }
-      storyCount++;
-    }
-  }
-
-  const dependencyLinks = await persistJiraDependencies(jira, preview, storyKeyByPreviewId);
-
-  return JSON.stringify({
-    result: "success",
-    targetSystem: "jira",
-    analysisMode: "process",
-    storyMaturity,
-    epics: epicCount,
-    userStories: storyCount,
-    dependencyLinks,
-  });
-}
 
 async function handleCreateBacklog(client: AzureDevOpsClient, input: ToolInput): Promise<string> {
   const backlogStore = getFileStore();
@@ -2767,27 +2341,8 @@ export async function handleWorkItemTool(
   input: ToolInput
 ): Promise<string> {
   try {
-    const targetSystem = parseTargetSystem(input.targetSystem);
     switch (toolName) {
       case "list_epics": {
-        if (targetSystem === "jira") {
-          const jira = requireJiraClient(clients);
-          const epics = await jira.listIssues({
-            projectKey: input.project,
-            issueType: "Epic",
-            state: input.state,
-            assignedTo: input.assignedTo,
-            maxResults: input.top,
-          });
-          const items = epics.map((e) => ({
-            id: e.key,
-            key: e.key,
-            title: e.fields?.summary ?? "",
-            state: e.fields?.status?.name ?? "",
-          }));
-          return JSON.stringify({ result: "success", count: items.length, items });
-        }
-
         const client = requireAzureClient(clients);
         const epics = await client.listWorkItems({
           project: input.project,
@@ -2801,24 +2356,6 @@ export async function handleWorkItemTool(
       }
 
       case "list_features": {
-        if (targetSystem === "jira") {
-          const jira = requireJiraClient(clients);
-          const features = await jira.listIssues({
-            projectKey: input.project,
-            issueType: "New Feature",
-            epicKey: input.epicKey,
-            state: input.state,
-            maxResults: input.top,
-          });
-          const items = features.map((f) => ({
-            id: f.key,
-            key: f.key,
-            title: f.fields?.summary ?? "",
-            state: f.fields?.status?.name ?? "",
-          }));
-          return JSON.stringify({ result: "success", count: items.length, items });
-        }
-
         const client = requireAzureClient(clients);
         const features = await client.listWorkItems({
           project: input.project,
@@ -2832,27 +2369,6 @@ export async function handleWorkItemTool(
       }
 
       case "list_user_stories": {
-        if (targetSystem === "jira") {
-          const jira = requireJiraClient(clients);
-          const linkTypeName = jira.getHierarchyLinkType();
-          const stories = await jira.listIssues({
-            projectKey: input.project,
-            issueType: "Story",
-            linkedToKey: input.featureKey,
-            linkTypeName,
-            state: input.state,
-            assignedTo: input.assignedTo,
-            maxResults: input.top,
-          });
-          const items = stories.map((s) => ({
-            id: s.key,
-            key: s.key,
-            title: s.fields?.summary ?? "",
-            state: s.fields?.status?.name ?? "",
-          }));
-          return JSON.stringify({ result: "success", count: items.length, items });
-        }
-
         const client = requireAzureClient(clients);
         const stories = await client.listWorkItems({
           project: input.project,
@@ -2867,35 +2383,8 @@ export async function handleWorkItemTool(
       }
 
       case "get_user_story": {
-        if (targetSystem === "jira") {
-          const jira = requireJiraClient(clients);
-          const storyKey = requireJiraKey(input.userStoryKey, "userStoryKey");
-          const story = await jira.getIssue(storyKey);
-
-          const linkTypeName = jira.getHierarchyLinkType();
-          const tasks = await jira.listIssues({
-            projectKey: input.project,
-            issueType: "Task",
-            linkedToKey: storyKey,
-            linkTypeName,
-            maxResults: 200,
-          });
-          const taskItems = tasks.map((t) => ({ id: t.key, key: t.key, title: t.fields?.summary ?? "" }));
-
-          const description = jiraDescriptionToText(story.fields?.description);
-          return JSON.stringify({
-            result: "success",
-            id: story.key,
-            key: story.key,
-            title: story.fields?.summary ?? "",
-            state: story.fields?.status?.name ?? "",
-            description: truncate(description),
-            tasks: taskItems,
-          });
-        }
-
         if (typeof input.userStoryId !== "number") {
-          throw new Error("For Azure DevOps, provide userStoryId (number). For Jira, provide userStoryKey.");
+          throw new Error("Provide userStoryId (number).");
         }
 
         const client = requireAzureClient(clients);
@@ -2917,18 +2406,8 @@ export async function handleWorkItemTool(
       }
 
       case "add_acceptance_criteria": {
-        if (targetSystem === "jira") {
-          const jira = requireJiraClient(clients);
-          const storyKey = requireJiraKey(input.userStoryKey, "userStoryKey");
-          const story = await jira.getIssue(storyKey);
-          const existing = jiraDescriptionToText(story.fields?.description);
-          const updated = appendAcceptanceCriteriaBlock(existing, input.criteria);
-          await jira.updateIssue(storyKey, { description: updated });
-          return JSON.stringify({ result: "success", key: storyKey });
-        }
-
         if (typeof input.userStoryId !== "number") {
-          throw new Error("For Azure DevOps, provide userStoryId (number). For Jira, provide userStoryKey.");
+          throw new Error("Provide userStoryId (number).");
         }
 
         const client = requireAzureClient(clients);
@@ -2941,27 +2420,6 @@ export async function handleWorkItemTool(
       }
 
       case "list_tasks": {
-        if (targetSystem === "jira") {
-          const jira = requireJiraClient(clients);
-          const linkTypeName = jira.getHierarchyLinkType();
-          const tasks = await jira.listIssues({
-            projectKey: input.project,
-            issueType: "Task",
-            linkedToKey: input.userStoryKey,
-            linkTypeName,
-            state: input.state,
-            assignedTo: input.assignedTo,
-            maxResults: input.top,
-          });
-          const items = tasks.map((t) => ({
-            id: t.key,
-            key: t.key,
-            title: t.fields?.summary ?? "",
-            state: t.fields?.status?.name ?? "",
-          }));
-          return JSON.stringify({ result: "success", count: items.length, items });
-        }
-
         const client = requireAzureClient(clients);
         const tasks = await client.listWorkItems({
           project: input.project,
@@ -2976,18 +2434,6 @@ export async function handleWorkItemTool(
       }
 
       case "create_epic": {
-        if (targetSystem === "jira") {
-          const jira = requireJiraClient(clients);
-          const epic = await jira.createIssue({
-            projectKey: input.project,
-            issueType: "Epic",
-            summary: input.title!,
-            description: input.description,
-            labels: ["mcp", "backlog", "epic"],
-          });
-          return JSON.stringify({ result: "success", id: epic.key, key: epic.key, title: input.title! });
-        }
-
         const client = requireAzureClient(clients);
         const epic = await client.createWorkItem({
           project: input.project,
@@ -3001,19 +2447,6 @@ export async function handleWorkItemTool(
       }
 
       case "create_feature": {
-        if (targetSystem === "jira") {
-          const jira = requireJiraClient(clients);
-          const feature = await jira.createIssue({
-            projectKey: input.project,
-            issueType: "New Feature",
-            summary: input.title!,
-            description: input.description,
-            epicKey: input.epicKey,
-            labels: ["mcp", "backlog", "feature"],
-          });
-          return JSON.stringify({ result: "success", id: feature.key, key: feature.key, title: input.title! });
-        }
-
         const client = requireAzureClient(clients);
         const feature = await client.createWorkItem({
           project: input.project,
@@ -3027,27 +2460,6 @@ export async function handleWorkItemTool(
       }
 
       case "create_user_story": {
-        if (targetSystem === "jira") {
-          const jira = requireJiraClient(clients);
-          const description = appendAcceptanceCriteriaBlock(input.description ?? "", input.acceptanceCriteria);
-          const story = await jira.createIssue({
-            projectKey: input.project,
-            issueType: "Story",
-            summary: input.title!,
-            description,
-            labels: ["mcp", "backlog", "story"],
-          });
-
-          if (input.featureKey?.trim()) {
-            await jira.createIssueLink({
-              parentKey: input.featureKey.trim(),
-              childKey: story.key,
-            });
-          }
-
-          return JSON.stringify({ result: "success", id: story.key, key: story.key, title: input.title! });
-        }
-
         const client = requireAzureClient(clients);
         const story = await client.createWorkItem({
           project: input.project,
@@ -3062,32 +2474,8 @@ export async function handleWorkItemTool(
       }
 
       case "create_task": {
-        if (targetSystem === "jira") {
-          const jira = requireJiraClient(clients);
-          const parentStoryKey = requireJiraKey(input.userStoryKey, "userStoryKey");
-          const task = await jira.createIssue({
-            projectKey: input.project,
-            issueType: "Task",
-            summary: input.title!,
-            description: input.description,
-            labels: ["mcp", "backlog", "task"],
-          });
-
-          await jira.createIssueLink({ parentKey: parentStoryKey, childKey: task.key });
-
-          if (input.assignedTo?.trim()) {
-            const raw = input.assignedTo.trim();
-            if (raw.includes("@") || raw.includes(" ")) {
-              throw new Error("Jira assignment requires an accountId. Provide assignedTo as Jira accountId (not email/display name). ");
-            }
-            await jira.assignIssue(task.key, raw);
-          }
-
-          return JSON.stringify({ result: "success", id: task.key, key: task.key, title: input.title! });
-        }
-
         if (typeof input.userStoryId !== "number") {
-          throw new Error("For Azure DevOps, provide userStoryId (number). For Jira, provide userStoryKey.");
+          throw new Error("Provide userStoryId (number).");
         }
 
         const client = requireAzureClient(clients);
@@ -3228,40 +2616,11 @@ export async function handleWorkItemTool(
         return handlePreviewBacklog(input);
 
       case "create_backlog":
-        if (targetSystem === "jira") {
-          return handleCreateBacklogJira(requireJiraClient(clients), input);
-        }
         return handleCreateBacklog(requireAzureClient(clients), input);
 
       case "update_work_item": {
-        if (targetSystem === "jira") {
-          const jira = requireJiraClient(clients);
-          const issueKey = requireJiraKey(input.workItemKey, "workItemKey");
-
-          if (typeof input.description === "string") {
-            await jira.updateIssue(issueKey, { description: input.description });
-          }
-
-          if (input.assignedTo?.trim()) {
-            const raw = input.assignedTo.trim();
-            if (raw.toLowerCase() === "unassigned" || raw.toLowerCase() === "none") {
-              await jira.assignIssue(issueKey, null);
-            } else if (raw.includes("@") || raw.includes(" ")) {
-              throw new Error("Jira assignment requires an accountId. Provide assignedTo as Jira accountId (not email/display name). ");
-            } else {
-              await jira.assignIssue(issueKey, raw);
-            }
-          }
-
-          if (input.state?.trim()) {
-            await jira.transitionIssue(issueKey, input.state);
-          }
-
-          return JSON.stringify({ result: "success", key: issueKey });
-        }
-
         if (typeof input.workItemId !== "number") {
-          throw new Error("For Azure DevOps, provide workItemId (number). For Jira, provide workItemKey.");
+          throw new Error("Provide workItemId (number).");
         }
 
         const client = requireAzureClient(clients);

@@ -5,7 +5,6 @@ export interface ChatResponse {
 
 export interface ProcessResultData {
   executedTools?: string[];
-  platform?: "azure-devops" | "jira";
   project?: string;
   boardUrl?: string;
   review?: BacklogReviewResult;
@@ -105,25 +104,17 @@ export interface UploadResponse {
 }
 
 export interface SetupConfigPayload {
-  platform?: "azure-devops" | "jira";
   azureDevOpsOrg?: string;
   azureDevOpsUrl?: string;
   azureDevOpsProject?: string;
   azureDevOpsPat?: string;
-  jiraBaseUrl?: string;
-  jiraProject?: string;
-  jiraApiToken?: string;
 }
 
 export interface SetupConfigState {
-  platform?: "azure-devops" | "jira";
   azureDevOpsOrg?: string;
   azureDevOpsUrl?: string;
   azureDevOpsProject?: string;
-  jiraBaseUrl?: string;
-  jiraProject?: string;
   hasAzureDevOpsPat: boolean;
-  hasJiraApiToken: boolean;
   isValidated: boolean;
 }
 
