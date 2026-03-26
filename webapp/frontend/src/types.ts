@@ -123,3 +123,23 @@ export interface ValidateSetupResponse {
   state: SetupConfigState;
   error?: string;
 }
+
+export interface EnrichmentCheckResult {
+  result: string;
+  hasEnrichmentFields: boolean;
+  processName: string;
+  missingFieldCount: number;
+  missingFields: string[];
+}
+
+export interface MigrateEnrichmentPayload {
+  sourceOrgUrl: string;
+  sourceProject: string;
+  sourceProcessName: string;
+  sourcePat: string;
+}
+
+export interface MigrateEnrichmentResult {
+  result: string;
+  message: string;
+}

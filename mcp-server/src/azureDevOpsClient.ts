@@ -56,6 +56,8 @@ export interface WorkItemRelationInput {
 
 export class AzureDevOpsClient {
   private readonly webApi: WebApi;
+  private readonly orgUrl: string;
+  private readonly pat: string;
   private witApi: IWorkItemTrackingApi | null = null;
 
   constructor(config: Config) {
@@ -63,12 +65,22 @@ export class AzureDevOpsClient {
       throw new Error("Azure DevOps is not configured. Set AZURE_DEVOPS_ORG, AZURE_DEVOPS_PAT, and AZURE_DEVOPS_URL.");
     }
 
+    this.orgUrl = config.azureDevOps.url;
+    this.pat = config.azureDevOps.pat;
     const authHandler = getPersonalAccessTokenHandler(config.azureDevOps.pat);
     this.webApi = new WebApi(config.azureDevOps.url, authHandler);
     logger.info("Azure DevOps client initialized", {
       org: config.azureDevOps.org,
       url: config.azureDevOps.url,
     });
+  }
+
+  getOrgUrl(): string {
+    return this.orgUrl;
+  }
+
+  getPat(): string {
+    return this.pat;
   }
 
   private async getWitApi(): Promise<IWorkItemTrackingApi> {

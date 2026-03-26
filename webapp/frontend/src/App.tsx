@@ -2,16 +2,18 @@ import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { InteractionRequiredAuthError } from "@azure/msal-browser";
 import { useMsal } from "@azure/msal-react";
 import {
+  checkEnrichment,
   deleteAllFiles,
   getFiles,
   getRandomFact,
   getSetupConfig,
+  migrateEnrichment,
   processDocument,
   saveSetupConfig,
   uploadFile,
   validateSetupConfig,
 } from "./api";
-import { BacklogReviewResult, SetupConfigPayload, SetupConfigState, UploadedFile } from "./types";
+import { BacklogReviewResult, EnrichmentCheckResult, SetupConfigPayload, SetupConfigState, UploadedFile } from "./types";
 
 const bffScope = import.meta.env.VITE_BFF_SCOPE as string;
 type LoadingAction =
@@ -188,6 +190,14 @@ export function App() {
   const [resultSummary, setResultSummary] = useState<Record<string, number> | null>(null);
   const [review, setReview] = useState<BacklogReviewResult | null>(null);
   const [showEnrichmentFieldsPage, setShowEnrichmentFieldsPage] = useState(false);
+  const [enrichmentCheck, setEnrichmentCheck] = useState<EnrichmentCheckResult | null>(null);
+  const [enrichmentChecking, setEnrichmentChecking] = useState(false);
+  const [showMigrationForm, setShowMigrationForm] = useState(false);
+  const [migrating, setMigrating] = useState(false);
+  const [sourceOrgUrl, setSourceOrgUrl] = useState("");
+  const [sourceProject, setSourceProject] = useState("");
+  const [sourceProcessName, setSourceProcessName] = useState("");
+  const [sourcePat, setSourcePat] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [terminalLines, setTerminalLines] = useState<string[]>([
@@ -500,6 +510,24 @@ export function App() {
       setShowValidationSuccess(true);
       setStatus("Successfully validated.");
       logLine("Connection validated successfully.");
+
+      // After validation succeeds, check enrichment fields
+      setEnrichmentChecking(true);
+      logLine("Checking project for enrichment custom fields...");
+      try {
+        const enrichResult = await checkEnrichment(token);
+        setEnrichmentCheck(enrichResult);
+        if (enrichResult.hasEnrichmentFields) {
+          logLine(`Enrichment fields found in process "${enrichResult.processName}".`);
+        } else {
+          logLine(`Missing ${enrichResult.missingFieldCount} enrichment fields. Migration required.`);
+          setShowMigrationForm(true);
+        }
+      } catch (err) {
+        logLine("Could not check enrichment fields: " + (err instanceof Error ? err.message : "unknown error"));
+      } finally {
+        setEnrichmentChecking(false);
+      }
     } catch (validationError) {
       const message = validationError instanceof Error ? validationError.message : "Validation failed";
       setError(message);
@@ -507,6 +535,31 @@ export function App() {
     } finally {
       setValidatingConnection(false);
       setActionLoading((current) => (current === "validate-connection" ? null : current));
+    }
+  }
+
+  async function handleMigrateEnrichment(): Promise<void> {
+    setError(null);
+    setMigrating(true);
+    logLine("Starting enrichment process migration...");
+    try {
+      const token = await getAccessToken();
+      const result = await migrateEnrichment(token, {
+        sourceOrgUrl: sourceOrgUrl.trim(),
+        sourceProject: sourceProject.trim(),
+        sourceProcessName: sourceProcessName.trim(),
+        sourcePat: sourcePat.trim(),
+      });
+      logLine("Migration complete: " + result.message);
+      setShowMigrationForm(false);
+      setEnrichmentCheck({ ...enrichmentCheck!, hasEnrichmentFields: true, missingFieldCount: 0, missingFields: [] });
+      setStatus("Enrichment process migrated successfully.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Migration failed";
+      logLine("Migration failed: " + msg);
+      setError(msg);
+    } finally {
+      setMigrating(false);
     }
   }
 
@@ -813,6 +866,14 @@ export function App() {
           <div className="modal-card">
             <h3>Successfully Validated</h3>
             <p>Your connection is valid. Continue to backlog creation.</p>
+            {enrichmentChecking ? (
+              <span className="inline-spinner" role="status" aria-live="polite">
+                <span className="spinner-dot" aria-hidden="true" />
+                Checking enrichment fields...
+              </span>
+            ) : enrichmentCheck?.hasEnrichmentFields ? (
+              <p style={{ color: "#0a7c00", fontWeight: 600 }}>Enrichment fields verified.</p>
+            ) : null}
             <button
               onClick={async () => {
                 setShowValidationSuccess(false);
@@ -822,6 +883,70 @@ export function App() {
             >
               Continue
             </button>
+          </div>
+        </div>
+      ) : null}
+
+      {showMigrationForm && enrichmentCheck && !enrichmentCheck.hasEnrichmentFields ? (
+        <div className="modal-backdrop">
+          <div className="modal-card" style={{ maxWidth: 520 }}>
+            <h3>Enrichment Process Migration Required</h3>
+            <p>
+              Your project's process template ("{enrichmentCheck.processName}") is missing{" "}
+              {enrichmentCheck.missingFieldCount} enrichment custom field{enrichmentCheck.missingFieldCount !== 1 ? "s" : ""}.
+            </p>
+            <p>Provide a source Azure DevOps org that has the Enrichment process to migrate it.</p>
+            <label>
+              Source Organization URL
+              <input
+                placeholder="https://dev.azure.com/source-org"
+                value={sourceOrgUrl}
+                onChange={(event) => setSourceOrgUrl(event.target.value)}
+                disabled={migrating}
+              />
+            </label>
+            <label>
+              Source Project
+              <input
+                placeholder="Source project name"
+                value={sourceProject}
+                onChange={(event) => setSourceProject(event.target.value)}
+                disabled={migrating}
+              />
+            </label>
+            <label>
+              Source Process Name
+              <input
+                placeholder="e.g. Enrichment"
+                value={sourceProcessName}
+                onChange={(event) => setSourceProcessName(event.target.value)}
+                disabled={migrating}
+              />
+            </label>
+            <label>
+              Source PAT Token
+              <input
+                type="password"
+                placeholder="PAT for source organization"
+                value={sourcePat}
+                onChange={(event) => setSourcePat(event.target.value)}
+                disabled={migrating}
+              />
+            </label>
+            <div className="setup-actions">
+              <button disabled={migrating} onClick={() => void handleMigrateEnrichment()}>
+                {migrating ? "Migrating..." : "Migrate Process"}
+              </button>
+              <button disabled={migrating} onClick={() => setShowMigrationForm(false)}>
+                Skip
+              </button>
+            </div>
+            {migrating ? (
+              <span className="inline-spinner" role="status" aria-live="polite">
+                <span className="spinner-dot" aria-hidden="true" />
+                Migrating enrichment process...
+              </span>
+            ) : null}
           </div>
         </div>
       ) : null}
