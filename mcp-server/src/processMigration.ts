@@ -306,7 +306,7 @@ export async function checkProjectEnrichmentFields(
 // Process migration — read from source, write to target
 // ---------------------------------------------------------------------------
 
-export async function migrateProcess(migrationConfig: ProcessMigrationConfig): Promise<void> {
+export async function migrateProcess(migrationConfig: ProcessMigrationConfig): Promise<{ processId: string; processName: string }> {
   const { sourceOrgUrl, sourcePat, sourceProcessName, targetOrgUrl, targetPat } = migrationConfig;
 
   logger.info("=== Process Migration: START ===");
@@ -656,6 +656,45 @@ export async function migrateProcess(migrationConfig: ProcessMigrationConfig): P
     witsProcessed: witDataList.length,
     fieldsCreated: createdFieldRefs.size,
   });
+
+  return { processId: createdProcess.typeId, processName: sourceProcess.name };
+}
+
+// ---------------------------------------------------------------------------
+// Assign the migrated process to a target project
+// ---------------------------------------------------------------------------
+
+export async function assignProcessToProject(
+  orgUrl: string,
+  pat: string,
+  projectName: string,
+  processId: string,
+): Promise<void> {
+  logger.info("Assigning migrated process to project…", { projectName, processId });
+
+  // Get the project ID first
+  const project = await adoFetch<{ id: string; name: string }>(
+    orgUrl,
+    pat,
+    `_apis/projects/${encodeURIComponent(projectName)}`,
+  );
+
+  // Update the project's process template
+  await adoFetch(
+    orgUrl,
+    pat,
+    `_apis/projects/${project.id}`,
+    "PATCH",
+    {
+      capabilities: {
+        processTemplate: {
+          templateTypeId: processId,
+        },
+      },
+    },
+  );
+
+  logger.info("Process assigned to project successfully", { projectName, processId });
 }
 
 // ---------------------------------------------------------------------------
