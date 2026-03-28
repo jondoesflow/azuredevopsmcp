@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server that integrates with Azure DevOps to manag
 
 ## Features
 
-- **19 MCP tools** — Create, list, update, and query work items + document analysis + automated backlog creation
+- **22 MCP tools** — Create, list, update, and query work items + document analysis + automated backlog creation
 - **Automated backlog creation** — Supports process-first discovery backlogs (recommended) and legacy transcript/theme backlogs
 - **Gherkin acceptance criteria** — User stories include Given/When/Then acceptance criteria
 - **MoSCoW prioritisation** — User story descriptions include MoSCoW priority ratings
@@ -53,7 +53,7 @@ For internal users who cannot use Teams as the primary channel, this repository 
 
 This keeps `MCP_API_KEY` server-side in the BFF and allows browser clients to authenticate with Entra tokens.
 
-## Available Tools (19)
+## Available Tools (22)
 
 ### Work Item Management
 | Tool | Description |
@@ -81,6 +81,12 @@ This keeps `MCP_API_KEY` server-side in the BFF and allows browser clients to au
 | `analyse_document` | Analyses a document in `process` mode (recommended) or `themes` mode (legacy) |
 | `get_theme_details` | Returns subtopics for a specific theme |
 | `create_backlog` | Creates a process-first or legacy backlog from an analysed document |
+
+### Enrichment Process Tools
+| Tool | Description |
+|------|-------------|
+| `check_enrichment_fields` | Check if a project's process template has the 22 enrichment custom fields |
+| `migrate_enrichment_process` | Migrate the Enrichment process template from a source org to the target org |
 
 ## How It Works
 
@@ -156,7 +162,7 @@ mcp-server/
     azureDevOpsClient.ts  # Azure DevOps REST API client
     processMigration.ts   # Pre-flight Enrichment process check & migration
     tools/
-      workItems.ts        # 19 MCP tool definitions and handlers
+      workItems.ts        # 22 MCP tool definitions and handlers
   Dockerfile              # Multi-stage Docker build
   SETUP-GUIDE.md          # Complete end-to-end setup guide
   AZURE-DEPLOYMENT.md     # Azure infrastructure deployment reference

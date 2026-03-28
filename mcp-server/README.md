@@ -4,7 +4,7 @@ An MCP (Model Context Protocol) server that integrates with Azure DevOps, enabli
 
 ## Features
 
-- **19 MCP tools** — Work item CRUD, document analysis, and automated backlog creation
+- **22 MCP tools** — Work item CRUD, document analysis, and automated backlog creation
 - **Automated backlog creation** — Upload a document → analyse into themes → create full hierarchy in one call
 - **Gherkin acceptance criteria** — User stories include Given/When/Then format
 - **MoSCoW prioritisation** — User story descriptions include priority ratings
@@ -43,7 +43,7 @@ Test: `curl http://localhost:3000/health`
 | `/upload` | POST | REST file upload (JSON: fileName, fileContent, contentType) |
 | `/files` | GET | List uploaded files |
 
-## Available Tools (19)
+## Available Tools (22)
 
 ### Work Item Management
 | Tool | Description |
@@ -71,6 +71,12 @@ Test: `curl http://localhost:3000/health`
 | `analyse_document` | Analyses document server-side in `themes` (legacy) or `process` (process-first) mode |
 | `get_theme_details` | Returns subtopics for a specific theme |
 | `create_backlog` | Creates backlog from analysed document (process-first placeholders or legacy themes) |
+
+### Enrichment Process Tools
+| Tool | Description |
+|------|-------------|
+| `check_enrichment_fields` | Check if a project's process template has the 22 enrichment custom fields |
+| `migrate_enrichment_process` | Migrate the Enrichment process template from a source org to the target org |
 
 ## Work Item Format
 

@@ -148,7 +148,7 @@ Expected health response:
   "version": "1.0.0",
   "transport": "streamable-http",
   "authEnabled": true,
-  "tools": 19
+  "tools": 22
 }
 ```
 
@@ -160,7 +160,7 @@ Expected health response:
 2. Add a new **MCP** tool
 3. Set the URL to: `http://<your-dns-label>.<region>.azurecontainer.io/mcp`
 4. Authentication: **API Key** — Header name: `apikey`, value: your MCP API key
-5. Test the connection - it should discover 19 tools
+5. Test the connection - it should discover 22 tools
 
 ### Copilot Studio Agent Instructions
 
@@ -264,6 +264,13 @@ az container delete -g mcp-server-rg -n mcp-azure-devops --yes
 | `PORT` | No | Server port (default: `80`) |
 | `TRANSPORT_MODE` | No | `http` or `stdio` (default: `http`) |
 | `MCP_API_KEY` | No | API key for authentication (disabled if empty) |
+| `SOURCE_ADO_ORG_URL` | No | Source org URL for process migration (enables migration when set) |
+| `SOURCE_ADO_PROJECT` | No | Source project name for process migration |
+| `SOURCE_ADO_PROCESS_NAME` | No | Process template name to migrate (e.g. "Enrichment") |
+| `SOURCE_ADO_PAT` | No | PAT for the source org |
+| `TARGET_ADO_ORG_URL` | No | Target org URL (defaults to `AZURE_DEVOPS_URL`) |
+| `TARGET_ADO_PROJECT` | No | Target project (defaults to `AZURE_DEVOPS_ORG`) |
+| `TARGET_ADO_PAT` | No | Target PAT (defaults to `AZURE_DEVOPS_PAT`) |
 
 ---
 
@@ -281,7 +288,7 @@ az container delete -g mcp-server-rg -n mcp-azure-devops --yes
 
 ---
 
-## Available Tools (19)
+## Available Tools (22)
 
 | Tool | Description |
 |------|-------------|
@@ -304,6 +311,8 @@ az container delete -g mcp-server-rg -n mcp-azure-devops --yes
 | `analyse_document` | Analyses document server-side, extracts themes |
 | `get_theme_details` | Returns subtopics for a specific theme |
 | `create_backlog` | Creates full backlog (epics/features/stories/tasks) from analysis |
+| `check_enrichment_fields` | Check if a project's process template has the 22 enrichment custom fields |
+| `migrate_enrichment_process` | Migrate the Enrichment process template from a source org to the target org |
 
 ---
 
