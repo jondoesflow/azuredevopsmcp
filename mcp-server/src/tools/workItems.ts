@@ -1,6 +1,6 @@
 import { AzureDevOpsClient } from "../azureDevOpsClient.js";
 import { logger } from "../logger.js";
-import { checkProjectEnrichmentFields, migrateProcess, assignProcessToProject } from "../processMigration.js";
+import { checkProjectEnrichmentFields, checkEnrichmentProcessExists, migrateProcess, assignProcessToProject } from "../processMigration.js";
 import { enrichGeneratedWorkItems } from "./enrichment/orchestrator.js";
 import {
   EnrichmentFlags,
@@ -2700,23 +2700,37 @@ export async function handleWorkItemTool(
         if (!input.sourceOrgUrl || !input.sourceProject || !input.sourceProcessName || !input.sourcePat) {
           throw new Error("sourceOrgUrl, sourceProject, sourceProcessName, and sourcePat are all required.");
         }
+
+        const targetOrgUrl = client.getOrgUrl();
+        const targetPat = client.getPat();
+
+        // Check if the Enrichment process already exists in the target org (e.g. from a prior attempt)
+        const existing = await checkEnrichmentProcessExists(targetOrgUrl, targetPat);
+        if (existing.found && existing.processId) {
+          logger.info("Enrichment process already exists in target org — assigning to project", {
+            processName: existing.processName,
+            processId: existing.processId,
+          });
+          await assignProcessToProject(targetOrgUrl, targetPat, input.project, existing.processId);
+          return JSON.stringify({
+            result: "success",
+            message: `Enrichment process "${existing.processName}" already existed — assigned to project "${input.project}".`,
+          });
+        }
+
+        // Migrate from source
         const migrationResult = await migrateProcess({
           sourceOrgUrl: input.sourceOrgUrl,
           sourceProject: input.sourceProject,
           sourceProcessName: input.sourceProcessName,
           sourcePat: input.sourcePat,
-          targetOrgUrl: client.getOrgUrl(),
+          targetOrgUrl,
           targetProject: input.project,
-          targetPat: client.getPat(),
+          targetPat,
         });
 
         // Assign the newly created process to the target project
-        await assignProcessToProject(
-          client.getOrgUrl(),
-          client.getPat(),
-          input.project,
-          migrationResult.processId,
-        );
+        await assignProcessToProject(targetOrgUrl, targetPat, input.project, migrationResult.processId);
 
         return JSON.stringify({
           result: "success",
