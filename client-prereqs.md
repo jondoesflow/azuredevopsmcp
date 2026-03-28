@@ -44,6 +44,14 @@ Provide/approve values for:
 - `PORT`
 - `TRANSPORT_MODE`
 
+If the target Azure DevOps project does not have the Enrichment process template with custom fields,
+the web app wizard will prompt for source org credentials to migrate the process automatically.
+Alternatively, configure process migration via environment variables:
+- `SOURCE_ADO_ORG_URL`
+- `SOURCE_ADO_PROJECT`
+- `SOURCE_ADO_PROCESS_NAME`
+- `SOURCE_ADO_PAT`
+
 ## 6) Copilot Studio Configuration Prereqs
 - Agent created with MCP tool connection.
 - MCP connector configured with:

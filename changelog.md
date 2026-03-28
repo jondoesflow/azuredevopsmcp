@@ -2,6 +2,15 @@
 
 This changelog tracks updates **from this point onward**, with a focus on MCP server code and deployment behavior.
 
+## 2026-03-28
+- **breaking**: Removed all Jira integration — ADO-only tool (−1,703 lines)
+- **feat**: Enrichment field check after connection validation
+- **feat**: Process migration UI in web app wizard
+- **feat**: New MCP tools: `check_enrichment_fields`, `migrate_enrichment_process`
+- **fix**: BFF setupStore now properly resets isValidated on save
+- **infra**: Rebuilt ACA environment without VNet (removed Jira networking resources)
+- **infra**: Frontend deployed with Entra ID SPA credentials
+
 ## 2026-02-17
 
 ### MCP Server (mcp-server)

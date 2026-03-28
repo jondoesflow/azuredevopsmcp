@@ -220,6 +220,12 @@ export class SetupStore {
       return this.getState(userId);
     }
 
+    this.defaults.azureDevOpsOrg = merged.azureDevOpsOrg;
+    this.defaults.azureDevOpsUrl = merged.azureDevOpsUrl;
+    this.defaults.azureDevOpsProject = merged.azureDevOpsProject;
+    this.defaults.azureDevOpsPat = merged.azureDevOpsPat;
+    this.defaults.isValidated = false;
+
     process.env.AZURE_DEVOPS_ORG = merged.azureDevOpsOrg ?? "";
     process.env.AZURE_DEVOPS_URL = merged.azureDevOpsUrl ?? "";
     process.env.AZURE_DEVOPS_PROJECT = merged.azureDevOpsProject ?? "";
@@ -252,6 +258,7 @@ export class SetupStore {
       return this.getState(userId);
     }
 
+    this.defaults.isValidated = true;
     process.env.CONNECTION_VALIDATED = "true";
     writeEnv(new Map<string, string>([["CONNECTION_VALIDATED", process.env.CONNECTION_VALIDATED]]));
     return this.getState(userId);

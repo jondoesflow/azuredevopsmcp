@@ -71,7 +71,7 @@ mcp-server/
 │   ├── config.ts             # Environment variable loading
 │   ├── logger.ts             # Logging utility
 │   └── tools/
-│       └── workItems.ts      # All MCP tools (19 tools)
+│       └── workItems.ts      # All MCP tools (22 tools)
 ├── Dockerfile                # Multi-stage Docker build
 ├── package.json
 ├── tsconfig.json
@@ -82,7 +82,7 @@ mcp-server/
 
 ### Key Files
 
-- **`src/tools/workItems.ts`** — Contains all 19 MCP tools including `analyse_document`, `create_backlog`, `delete_file`, and all work item CRUD operations
+- **`src/tools/workItems.ts`** — Contains all 22 MCP tools including `analyse_document`, `create_backlog`, `delete_file`, and all work item CRUD operations
 - **`src/index.ts`** — Express server with `/upload` endpoint that handles base64 decoding from Power Automate, MCP transport setup, and health check
 - **`COPILOT-STUDIO-PROMPT.md`** — Agent instructions to paste into Copilot Studio, plus Topic and Power Automate flow setup details
 
@@ -124,7 +124,7 @@ Expected response:
   "version": "1.0.0",
   "transport": "streamable-http",
   "authEnabled": true,
-  "tools": 19
+  "tools": 22
 }
 ```
 
@@ -216,7 +216,7 @@ az container create `
 Invoke-WebRequest -Uri "http://<your-dns-label>.uksouth.azurecontainer.io/health" -UseBasicParsing
 ```
 
-Should return `"tools": 19`.
+Should return `"tools": 22`.
 
 ---
 
@@ -234,11 +234,11 @@ Should return `"tools": 19`.
    - Auth Type: **Header**
    - Header name: `apikey`
    - Value: your MCP API key
-7. Click **Connect** — it should discover 19 tools
+7. Click **Connect** — it should discover 22 tools
 
 ### 5.2 Verify Connection
 
-After connecting, you should see all 19 tools listed:
+After connecting, you should see all 22 tools listed:
 
 | Tool | Purpose |
 |------|---------|
@@ -502,6 +502,25 @@ az container create `
 
 ---
 
+## Enrichment Process Setup
+
+The MCP server uses 22 custom Azure DevOps fields for backlog enrichment (confidence scores, dependencies, quality metrics, etc.). These fields must exist in the target project's Agile process template.
+
+### Automatic check (via web app)
+The web app wizard checks for enrichment fields after connection validation. If fields are missing, it prompts for source org credentials to migrate the process.
+
+### Manual setup (via environment variables)
+Set `SOURCE_ADO_ORG_URL` to enable automatic migration at server startup. Required variables:
+- `SOURCE_ADO_ORG_URL` — Source org URL
+- `SOURCE_ADO_PROJECT` — Source project name
+- `SOURCE_ADO_PROCESS_NAME` — Process template name (e.g. "Enrichment")
+- `SOURCE_ADO_PAT` — Source org PAT
+
+Optional (default to target org credentials):
+- `TARGET_ADO_ORG_URL`, `TARGET_ADO_PROJECT`, `TARGET_ADO_PAT`
+
+---
+
 ## 12. Troubleshooting
 
 ### Health endpoint returns error
@@ -579,7 +598,7 @@ az container create `
 │         MCP Azure DevOps Server                  │
 │                                                  │
 │  /upload  → decode base64 → store in memory      │
-│  /mcp     → MCP tools (19 tools)                 │
+│  /mcp     → MCP tools (22 tools)                 │
 │  /health  → health check                         │
 │                                                  │
 │  Tools: analyse_document, create_backlog,        │
@@ -606,6 +625,6 @@ az container create `
 | Health Check | `http://<dns-label>.<region>.azurecontainer.io/health` |
 | File Upload | `POST http://<dns-label>.<region>.azurecontainer.io/upload` |
 | Auth Header | `apikey: <your-mcp-api-key>` |
-| Tools Count | 19 |
+| Tools Count | 22 |
 | Docker Image | `<registry>.azurecr.io/mcp-azure-devops:<version>` |
 | Agent Instructions | See `COPILOT-STUDIO-PROMPT.md` lines 9-25 |

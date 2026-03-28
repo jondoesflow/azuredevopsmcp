@@ -20,6 +20,18 @@ What to expect:
 - Inline spinner while save/validation runs.
 - A **Successfully Validated** confirmation modal when validation succeeds.
 
+## 1b) Enrichment field check
+
+After validation, the app automatically checks if your project's process template has the 22 enrichment custom fields.
+
+- If fields are present: you'll see "Enrichment fields verified" and can proceed.
+- If fields are missing: a migration form appears. Enter:
+  - **Source Org URL**: Azure DevOps org that has the Enrichment process
+  - **Source Project**: Project using the Enrichment process
+  - **Source Process Name**: Name of the process (e.g. "Enrichment")
+  - **Source PAT**: PAT token for the source org
+- Click **Migrate Process** to copy the process template to your target org.
+
 ## 2) Upload file
 
 In **Step 2: Upload + analysis**:

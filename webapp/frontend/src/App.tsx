@@ -958,8 +958,11 @@ export function App() {
             <p>Update your saved Azure DevOps connection profile.</p>
             {renderConnectionFields()}
             <div className="setup-actions">
-              <button onClick={() => void saveConnectionDetails()}>Save</button>
-              <button onClick={() => setShowConfigModal(false)}>Close</button>
+              <button onClick={async () => { await saveConnectionDetails(); setShowConfigModal(false); }}>Save & close</button>
+              <button disabled={validatingConnection} onClick={async () => { setShowConfigModal(false); await validateConnection(false); }}>
+                {validatingConnection ? "Validating..." : "Save & validate"}
+              </button>
+              <button onClick={() => setShowConfigModal(false)}>Cancel</button>
             </div>
             {renderInlineSpinner("save-connection", "Saving connection details...")}
           </div>

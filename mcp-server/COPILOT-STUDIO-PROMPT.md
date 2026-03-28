@@ -157,10 +157,10 @@ If the agent repeatedly calls `list_uploaded_files` and sees `count = 0`, check 
 
 ### Action 2: HTTP POST
 - **Method**: POST
-- **URI**: `http://mcp-cgsparc.uksouth.azurecontainer.io/upload`
+- **URI**: `{MCP_UPLOAD_URL}`
 - **Headers**:
   - `Content-Type`: `application/json`
-  - `apikey`: `689c6b1b-db19-42d0-9de0-0d1ea7da1567-f68f2d9d-dd6d-4d45-8b49-5abf5c675ad2`
+  - `apikey`: `{MCP_API_KEY}`
 - **Body**:
 ```json
 {
@@ -186,7 +186,7 @@ $b64 = [Convert]::ToBase64String($bytes)
 $body = @{ fileName = "file.txt"; fileContent = $b64 } | ConvertTo-Json -Compress
 [System.IO.File]::WriteAllText("upload_body.json", $body, [System.Text.Encoding]::UTF8)
 
-Invoke-WebRequest -Uri "http://mcp-cgsparc.uksouth.azurecontainer.io/upload" `
+Invoke-WebRequest -Uri "{MCP_UPLOAD_URL}" `
   -Method POST `
   -Headers @{ "apikey" = "<your-api-key>"; "Content-Type" = "application/json" } `
   -InFile "upload_body.json" -UseBasicParsing
