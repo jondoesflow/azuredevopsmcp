@@ -221,7 +221,10 @@ export function App() {
       .sort((left, right) => (left.enrichment?.confidence?.overall ?? 100) - (right.enrichment?.confidence?.overall ?? 100));
   }, [review]);
 
-  const connectionReady = Boolean(setupState?.isValidated);
+  // Connection is only ready when validated AND enrichment fields are confirmed
+  const connectionReady = Boolean(
+    setupState?.isValidated && enrichmentCheck?.hasEnrichmentFields
+  );
 
   function logLine(message: string): void {
     setTerminalLines((existing) => [...existing, `$ ${message}`]);
@@ -438,6 +441,23 @@ export function App() {
         if (state.isValidated) {
           await refreshFiles(token);
           logLine("Connection profile loaded.");
+
+          // Check enrichment fields on load for validated connections
+          setEnrichmentChecking(true);
+          try {
+            const enrichResult = await checkEnrichment(token);
+            setEnrichmentCheck(enrichResult);
+            if (enrichResult.hasEnrichmentFields) {
+              logLine(`Enrichment fields confirmed in process "${enrichResult.processName}".`);
+            } else {
+              logLine(`Missing ${enrichResult.missingFieldCount} enrichment fields. Migration required.`);
+              setShowMigrationForm(true);
+            }
+          } catch {
+            logLine("Could not check enrichment fields.");
+          } finally {
+            setEnrichmentChecking(false);
+          }
         }
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : "Failed to load configuration");
@@ -869,6 +889,42 @@ export function App() {
               {renderInlineSpinner("validate-connection", "Validating connection...")}
             </div>
 
+            {/* Enrichment check — blocks progress until fields are confirmed */}
+            {setupState?.isValidated && (
+              <div style={{ margin: "16px 0", padding: 16, borderRadius: 10, background: enrichmentCheck?.hasEnrichmentFields ? "#e6f4ea" : showMigrationForm ? "#fff3e0" : "#f5f5f5" }}>
+                {enrichmentChecking ? (
+                  <p style={{ margin: 0 }}>Checking project for enrichment custom fields...</p>
+                ) : enrichmentCheck?.hasEnrichmentFields ? (
+                  <p style={{ margin: 0, color: "#2e7d32", fontWeight: 600 }}>Enrichment fields verified in process &ldquo;{enrichmentCheck.processName}&rdquo;.</p>
+                ) : showMigrationForm && enrichmentCheck ? (
+                  <div>
+                    <h3 style={{ margin: "0 0 8px" }}>Enrichment Process Migration Required</h3>
+                    <p style={{ margin: "0 0 12px" }}>
+                      Your project&apos;s process template (&ldquo;{enrichmentCheck.processName}&rdquo;) is missing {enrichmentCheck.missingFieldCount} enrichment custom fields.
+                      Provide the connection details of an Azure DevOps org that has the Enrichment process.
+                    </p>
+                    <label>Source Org URL
+                      <input type="text" value={sourceOrgUrl} onChange={(e) => setSourceOrgUrl(e.target.value)} placeholder="https://dev.azure.com/source-org" disabled={migrating} />
+                    </label>
+                    <label>Source Project
+                      <input type="text" value={sourceProject} onChange={(e) => setSourceProject(e.target.value)} placeholder="Project using Enrichment process" disabled={migrating} />
+                    </label>
+                    <label>Source Process Name
+                      <input type="text" value={sourceProcessName} onChange={(e) => setSourceProcessName(e.target.value)} placeholder="e.g. Enrichment" disabled={migrating} />
+                    </label>
+                    <label>Source PAT
+                      <input type="password" value={sourcePat} onChange={(e) => setSourcePat(e.target.value)} placeholder="PAT for source org" disabled={migrating} />
+                    </label>
+                    <div className="setup-actions" style={{ marginTop: 10 }}>
+                      <button disabled={migrating || !sourceOrgUrl.trim() || !sourceProject.trim() || !sourceProcessName.trim() || !sourcePat.trim()} onClick={() => void handleMigrateEnrichment()}>
+                        {migrating ? "Migrating process..." : "Migrate Process"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )}
+
             <h2>Step 2: Upload + analysis</h2>
             <p>Connected platform: <strong>Azure DevOps</strong></p>
             <p>Project: <strong>{configuredProject || "(from validated setup)"}</strong></p>
@@ -983,92 +1039,16 @@ export function App() {
       {showValidationSuccess ? (
         <div className="modal-backdrop">
           <div className="modal-card">
-            <h3>Successfully Validated</h3>
-            <p>Your connection is valid. Continue to backlog creation.</p>
-            {enrichmentChecking ? (
-              <span className="inline-spinner" role="status" aria-live="polite">
-                <span className="spinner-dot" aria-hidden="true" />
-                Checking enrichment fields...
-              </span>
-            ) : enrichmentCheck?.hasEnrichmentFields ? (
-              <p style={{ color: "#0a7c00", fontWeight: 600 }}>Enrichment fields verified.</p>
-            ) : null}
-            <button
-              onClick={async () => {
-                setShowValidationSuccess(false);
-                const token = await getAccessToken();
-                await refreshFiles(token, false);
-              }}
-            >
+            <h3>Connection Validated</h3>
+            <p>Your Azure DevOps connection is valid. Checking enrichment fields...</p>
+            <button onClick={() => setShowValidationSuccess(false)}>
               Continue
             </button>
           </div>
         </div>
       ) : null}
 
-      {showMigrationForm && enrichmentCheck && !enrichmentCheck.hasEnrichmentFields ? (
-        <div className="modal-backdrop">
-          <div className="modal-card" style={{ maxWidth: 520 }}>
-            <h3>Enrichment Process Migration Required</h3>
-            <p>
-              Your project's process template ("{enrichmentCheck.processName}") is missing{" "}
-              {enrichmentCheck.missingFieldCount} enrichment custom field{enrichmentCheck.missingFieldCount !== 1 ? "s" : ""}.
-            </p>
-            <p>Provide a source Azure DevOps org that has the Enrichment process to migrate it.</p>
-            <label>
-              Source Organization URL
-              <input
-                placeholder="https://dev.azure.com/source-org"
-                value={sourceOrgUrl}
-                onChange={(event) => setSourceOrgUrl(event.target.value)}
-                disabled={migrating}
-              />
-            </label>
-            <label>
-              Source Project
-              <input
-                placeholder="Source project name"
-                value={sourceProject}
-                onChange={(event) => setSourceProject(event.target.value)}
-                disabled={migrating}
-              />
-            </label>
-            <label>
-              Source Process Name
-              <input
-                placeholder="e.g. Enrichment"
-                value={sourceProcessName}
-                onChange={(event) => setSourceProcessName(event.target.value)}
-                disabled={migrating}
-              />
-            </label>
-            <label>
-              Source PAT Token
-              <input
-                type="password"
-                placeholder="PAT for source organization"
-                value={sourcePat}
-                onChange={(event) => setSourcePat(event.target.value)}
-                disabled={migrating}
-              />
-            </label>
-            <div className="setup-actions">
-              <button disabled={migrating} onClick={() => void handleMigrateEnrichment()}>
-                {migrating ? "Migrating..." : "Migrate Process"}
-              </button>
-              <button disabled={migrating} onClick={() => setShowMigrationForm(false)}>
-                Skip
-              </button>
-            </div>
-            {migrating ? (
-              <span className="inline-spinner" role="status" aria-live="polite">
-                <span className="spinner-dot" aria-hidden="true" />
-                Migrating enrichment process...
-              </span>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+      {/* Migration modal removed — migration form is now inline in wizard Step 1 */}
 
       {showConfigModal ? (
         <div className="modal-backdrop">
