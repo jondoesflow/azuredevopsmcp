@@ -1,6 +1,6 @@
 import { AzureDevOpsClient } from "../azureDevOpsClient.js";
 import { logger } from "../logger.js";
-import { checkProjectEnrichmentFields, migrateProcess } from "../processMigration.js";
+import { checkProjectEnrichmentFields, migrateProcess, assignProcessToProject } from "../processMigration.js";
 import { enrichGeneratedWorkItems } from "./enrichment/orchestrator.js";
 import {
   EnrichmentFlags,
@@ -2700,7 +2700,7 @@ export async function handleWorkItemTool(
         if (!input.sourceOrgUrl || !input.sourceProject || !input.sourceProcessName || !input.sourcePat) {
           throw new Error("sourceOrgUrl, sourceProject, sourceProcessName, and sourcePat are all required.");
         }
-        await migrateProcess({
+        const migrationResult = await migrateProcess({
           sourceOrgUrl: input.sourceOrgUrl,
           sourceProject: input.sourceProject,
           sourceProcessName: input.sourceProcessName,
@@ -2709,7 +2709,19 @@ export async function handleWorkItemTool(
           targetProject: input.project,
           targetPat: client.getPat(),
         });
-        return JSON.stringify({ result: "success", message: "Enrichment process migrated successfully." });
+
+        // Assign the newly created process to the target project
+        await assignProcessToProject(
+          client.getOrgUrl(),
+          client.getPat(),
+          input.project,
+          migrationResult.processId,
+        );
+
+        return JSON.stringify({
+          result: "success",
+          message: `Enrichment process "${migrationResult.processName}" migrated and assigned to project "${input.project}".`,
+        });
       }
 
       default:
