@@ -190,6 +190,7 @@ export function App() {
   const [resultSummary, setResultSummary] = useState<Record<string, number> | null>(null);
   const [review, setReview] = useState<BacklogReviewResult | null>(null);
   const [showEnrichmentFieldsPage, setShowEnrichmentFieldsPage] = useState(false);
+  const [showUserGuide, setShowUserGuide] = useState(false);
   const [enrichmentCheck, setEnrichmentCheck] = useState<EnrichmentCheckResult | null>(null);
   const [enrichmentChecking, setEnrichmentChecking] = useState(false);
   const [showMigrationForm, setShowMigrationForm] = useState(false);
@@ -252,6 +253,97 @@ export function App() {
           </ul>
         ) : null}
       </section>
+    );
+  }
+
+  function renderUserGuide(): JSX.Element {
+    return (
+      <main className="fields-layout">
+        <section className="panel fields-panel" style={{ maxWidth: 820 }}>
+          <h2>User Guide</h2>
+          <p style={{ opacity: 0.8, marginBottom: 16 }}>Step-by-step guide to using the Backlog Assistant.</p>
+
+          <h3>Getting started</h3>
+          <p>Sign in with your organisational account. After sign-in you will see the backlog assistant home screen.</p>
+
+          <h3>Step 1: Connect to Azure DevOps</h3>
+          <ol>
+            <li>Enter your Azure DevOps <strong>URL</strong> (e.g. <code>https://dev.azure.com/your-org</code>).</li>
+            <li>Enter the <strong>Project name</strong> where backlog items should be created.</li>
+            <li>Enter a <strong>Personal Access Token (PAT)</strong> with Work Items Read &amp; Write scope.</li>
+            <li>Click <strong>Save details</strong>, then <strong>Validate connection</strong>.</li>
+          </ol>
+          <p>If a saved profile exists you will see <strong>Saved connection found</strong> with options to confirm or edit.</p>
+
+          <h3>Enrichment field check</h3>
+          <p>After validation the app automatically checks if your project has the 22 enrichment custom fields (confidence scores, dependencies, quality metrics, etc.).</p>
+          <ul>
+            <li><strong>Fields present</strong> — you will see &ldquo;Enrichment fields verified&rdquo; and can proceed.</li>
+            <li><strong>Fields missing</strong> — a migration form appears. Provide the <strong>Source Org URL</strong>, <strong>Source Project</strong>, <strong>Source Process Name</strong>, and <strong>Source PAT</strong> for an Azure DevOps org that already has the Enrichment process template, then click <strong>Migrate Process</strong>.</li>
+          </ul>
+
+          <h3>Step 2: Upload a document</h3>
+          <ol>
+            <li>Upload a single <code>.txt</code> file (transcript or to-be process document).</li>
+            <li>Confirm the file appears in the file list below the upload button.</li>
+          </ol>
+
+          <h3>Step 3: Create backlog</h3>
+          <ol>
+            <li>Select an <strong>Analysis mode</strong>:
+              <ul>
+                <li><strong>To-be process</strong> — for structured process documents.</li>
+                <li><strong>Transcript</strong> — for meeting transcripts or unstructured notes.</li>
+              </ul>
+            </li>
+            <li>Click <strong>Create Backlog</strong>.</li>
+            <li>Wait for the process to complete. You will see progress in the Execution Terminal and a rotating fact message during longer processing.</li>
+          </ol>
+
+          <h3>Step 4: View results</h3>
+          <p>After completion a link to your Azure DevOps board is shown. Click it to view the created epics, features, and user stories with enrichment data.</p>
+
+          <h3>Managing files</h3>
+          <ul>
+            <li><strong>Refresh files</strong> — reload the uploaded file list.</li>
+            <li><strong>Delete all uploaded files</strong> — clear all uploaded content from the server.</li>
+          </ul>
+
+          <h3>Configuration</h3>
+          <p>Click <strong>Configuration</strong> in the header to update your Azure DevOps connection at any time. Use <strong>Save &amp; validate</strong> to change to a different project and re-run the enrichment field check.</p>
+
+          <h3>Enrichment fields reference</h3>
+          <p>Click <strong>Enrichment fields</strong> in the header to see the full list of 22 custom Azure DevOps fields used for backlog enrichment, including confidence scores, dependencies, quality metrics, effort estimates, and more.</p>
+
+          <h3>Troubleshooting</h3>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+            <thead>
+              <tr style={{ borderBottom: "2px solid #e0e0e0", textAlign: "left" }}>
+                <th style={{ padding: "8px 12px" }}>Problem</th>
+                <th style={{ padding: "8px 12px" }}>Solution</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style={{ borderBottom: "1px solid #f0f0f0" }}>
+                <td style={{ padding: "8px 12px" }}>Create Backlog does nothing</td>
+                <td style={{ padding: "8px 12px" }}>Check that a <code>.txt</code> file is uploaded and visible in the file list.</td>
+              </tr>
+              <tr style={{ borderBottom: "1px solid #f0f0f0" }}>
+                <td style={{ padding: "8px 12px" }}>Validation fails</td>
+                <td style={{ padding: "8px 12px" }}>Check your URL, project name, and PAT token. Reopen Configuration and try again.</td>
+              </tr>
+              <tr style={{ borderBottom: "1px solid #f0f0f0" }}>
+                <td style={{ padding: "8px 12px" }}>UI looks outdated</td>
+                <td style={{ padding: "8px 12px" }}>Hard refresh with <code>Ctrl+F5</code> to clear browser cache.</td>
+              </tr>
+              <tr style={{ borderBottom: "1px solid #f0f0f0" }}>
+                <td style={{ padding: "8px 12px" }}>Unexpected error</td>
+                <td style={{ padding: "8px 12px" }}>Check the <strong>Execution Terminal</strong> panel for the detailed action flow and failure reason.</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      </main>
     );
   }
 
@@ -714,16 +806,43 @@ export function App() {
         <p>Secure web interface for Azure DevOps backlog creation.</p>
         <div className="auth-row">
           <span>Signed in as {account?.username}</span>
-          <button onClick={() => setShowEnrichmentFieldsPage((current) => !current)}>
-            {showEnrichmentFieldsPage ? "Back to assistant" : "Enrichment fields"}
-          </button>
-          <button onClick={() => setShowConfigModal(true)}>Configuration</button>
+          {(showEnrichmentFieldsPage || showUserGuide) ? (
+            <button onClick={() => { setShowEnrichmentFieldsPage(false); setShowUserGuide(false); }}>Back to assistant</button>
+          ) : (
+            <>
+              <button onClick={() => setShowEnrichmentFieldsPage(true)}>Enrichment fields</button>
+              <button onClick={() => setShowConfigModal(true)}>Configuration</button>
+            </>
+          )}
           <button onClick={signOut}>Sign out</button>
           {renderInlineSpinner("sign-out", "Signing out...")}
+          <button
+            onClick={() => { setShowUserGuide((c) => !c); setShowEnrichmentFieldsPage(false); }}
+            title="User Guide"
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: "50%",
+              border: "2px solid rgba(255,255,255,0.7)",
+              background: "transparent",
+              color: "#fff",
+              fontSize: 16,
+              fontWeight: 700,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 0,
+              marginLeft: 4,
+              flexShrink: 0,
+            }}
+          >
+            ?
+          </button>
         </div>
       </header>
 
-      {showEnrichmentFieldsPage ? renderEnrichmentFieldsPage() : !connectionReady ? (
+      {showUserGuide ? renderUserGuide() : showEnrichmentFieldsPage ? renderEnrichmentFieldsPage() : !connectionReady ? (
         <main className="wizard-layout">
           <section className="panel control-panel">
             {hasSavedConnection() ? (
