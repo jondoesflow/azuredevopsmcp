@@ -1494,8 +1494,35 @@ function extractEvidenceTerms(value: string): string[] {
   );
 }
 
+function splitIntoSentencesAndLines(content: string): string[] {
+  // First split by newlines to get paragraphs
+  const paragraphs = content.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+  const result: string[] = [];
+  for (const para of paragraphs) {
+    // If paragraph is short enough, keep as-is
+    if (para.length <= 200) {
+      result.push(para);
+      continue;
+    }
+    // Split long paragraphs into sentences
+    const sentences = para.split(/(?<=[.!?])\s+(?=[A-Z])/).map((s) => s.trim()).filter((s) => s.length > 0);
+    if (sentences.length > 1) {
+      result.push(...sentences);
+    } else {
+      // Try splitting on semicolons or commas for list-like content
+      const parts = para.split(/;\s*/).map((s) => s.trim()).filter((s) => s.length > 10);
+      if (parts.length > 1) {
+        result.push(...parts);
+      } else {
+        result.push(para);
+      }
+    }
+  }
+  return result;
+}
+
 function analyseProcessDocument(content: string): ProcessStage[] {
-  const lines = content.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+  const lines = splitIntoSentencesAndLines(content);
   const stages: ProcessStage[] = [];
   let currentStage: ProcessStage = { title: "To-Be Process Flow", steps: [] };
 
@@ -1506,8 +1533,10 @@ function analyseProcessDocument(content: string): ProcessStage[] {
   };
 
   for (const line of lines) {
-    const stageMatch = /^(?:\d+\s*[.)-]?\s*)?(?:stage|phase|process stage|process phase)\s*[:\-]\s*(.+)$/i.exec(line)
-      || /^(?:to[-\s]?be|future state)\s*[:\-]\s*(.+)$/i.exec(line);
+    const stageMatch = /^(?:\d+\s*[.)-]?\s*)?(?:stage|phase|process stage|process phase|module|section|area|workstream|stream|chapter)\s*[:\-]\s*(.+)$/i.exec(line)
+      || /^(?:to[-\s]?be|future state)\s*[:\-]\s*(.+)$/i.exec(line)
+      || /^(\d+\s*[.)]\s*.{5,60})$/.exec(line)  // numbered headings like "1. Order Management"
+      || (line.length <= 60 && line.length >= 5 && /^[A-Z][A-Za-z\s&\-/]+$/.test(line) && !/\b(the|and|for|with|this|that|from|into|will|shall|must|should|have|been|were|are|was|has|can|may)\b/i.test(line.split(/\s+/).slice(0, 2).join(" ")) ? [line, line] : null);
     if (stageMatch?.[1]) {
       pushCurrentStage();
       currentStage = { title: stageMatch[1].trim(), steps: [] };
