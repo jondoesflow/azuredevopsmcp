@@ -1205,6 +1205,15 @@ async function resolveContentUrl(url: string, fileName: string): Promise<{ conte
   return JSON.stringify({ result: "error", message: "contentUrl must be a data: URI or http(s) URL" });
 }
 
+function cleanExtractedText(raw: string): string {
+  return raw
+    .replace(/\ufffd/g, "")                   // remove Unicode replacement chars
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "") // remove control chars (keep \t \n \r)
+    .replace(/\r\n/g, "\n")                    // normalize line endings
+    .replace(/\n{3,}/g, "\n\n")               // collapse excessive blank lines
+    .trim();
+}
+
 async function extractTextFromBinary(base64Content: string, fileName: string): Promise<string> {
   const ext = fileName.toLowerCase().slice(fileName.lastIndexOf("."));
   const buffer = Buffer.from(base64Content, "base64");
@@ -1213,8 +1222,9 @@ async function extractTextFromBinary(base64Content: string, fileName: string): P
     try {
       const pdfParse = (await import("pdf-parse")).default;
       const result = await pdfParse(buffer);
-      logger.info("PDF text extracted", { fileName, pages: result.numpages, textLength: result.text.length });
-      return result.text;
+      const text = cleanExtractedText(result.text);
+      logger.info("PDF text extracted", { fileName, pages: result.numpages, textLength: text.length });
+      return text;
     } catch (err) {
       logger.warn("PDF parse failed, storing raw base64", { fileName, error: String(err) });
       return "";
@@ -1225,8 +1235,9 @@ async function extractTextFromBinary(base64Content: string, fileName: string): P
     try {
       const mammoth = await import("mammoth");
       const result = await mammoth.extractRawText({ buffer });
-      logger.info("DOCX text extracted", { fileName, textLength: result.value.length });
-      return result.value;
+      const text = cleanExtractedText(result.value);
+      logger.info("DOCX text extracted", { fileName, textLength: text.length });
+      return text;
     } catch (err) {
       logger.warn("DOCX parse failed", { fileName, error: String(err) });
       return "";
@@ -1245,8 +1256,9 @@ async function extractTextFromBinary(base64Content: string, fileName: string): P
         }
       }
       const text = sheets.join("\n\n");
-      logger.info("XLSX text extracted", { fileName, sheets: workbook.SheetNames.length, textLength: text.length });
-      return text;
+      const cleaned = cleanExtractedText(text);
+      logger.info("XLSX text extracted", { fileName, sheets: workbook.SheetNames.length, textLength: cleaned.length });
+      return cleaned;
     } catch (err) {
       logger.warn("XLSX parse failed", { fileName, error: String(err) });
       return "";
@@ -1447,13 +1459,18 @@ function parseAnalysisMode(rawMode: string | undefined): AnalysisMode {
 }
 
 function isLikelyProcessStep(line: string): boolean {
-  if (!line || line.length < 8 || line.length > 180) {
+  if (!line || line.length < 8 || line.length > 300) {
     return false;
   }
-  return /^(-|\*|•|\d+[.)])\s+/.test(line)
-    || /\b(then|after|before|next|submit|approve|validate|handoff|dispatch|book|invoice)\b/i.test(line)
-    || line.includes("->")
-    || line.includes("→");
+  // Bullet or numbered lines
+  if (/^(-|\*|•|\d+[.)])\s+/.test(line)) return true;
+  // Process keywords
+  if (/\b(then|after|before|next|submit|approve|validate|handoff|dispatch|book|invoice|create|configure|enable|integrate|implement|define|establish|manage|review|update|process|complete|trigger|generate|send|receive|assign|schedule|perform|execute|verify|ensure|maintain)\b/i.test(line)) return true;
+  // Flow arrows
+  if (line.includes("->") || line.includes("→")) return true;
+  // Any line that looks like a sentence (has a verb-like structure and is long enough)
+  if (line.length >= 15 && /^[A-Z]/.test(line)) return true;
+  return false;
 }
 
 function extractRoleFromStep(line: string): string | undefined {
@@ -1523,7 +1540,7 @@ function analyseProcessDocument(content: string): ProcessStage[] {
     return [
       {
         title: "To-Be Process Flow",
-        steps: lines.slice(0, 20).map((line) => ({
+        steps: lines.slice(0, 100).map((line) => ({
           title: line,
           role: extractRoleFromStep(line),
           evidenceTerms: extractEvidenceTerms(line),
@@ -1534,7 +1551,7 @@ function analyseProcessDocument(content: string): ProcessStage[] {
 
   return stages.map((stage) => ({
     ...stage,
-    steps: stage.steps.slice(0, 12),
+    steps: stage.steps.slice(0, 50),
   }));
 }
 
