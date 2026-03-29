@@ -1,6 +1,6 @@
 import { AzureDevOpsClient } from "../azureDevOpsClient.js";
 import { logger } from "../logger.js";
-import { checkProjectEnrichmentFields, checkEnrichmentProcessExists, migrateProcess, assignProcessToProject } from "../processMigration.js";
+import { checkProjectEnrichmentFields, checkEnrichmentProcessExists, migrateProcess, createProjectWithProcess } from "../processMigration.js";
 import { enrichGeneratedWorkItems } from "./enrichment/orchestrator.js";
 import {
   EnrichmentFlags,
@@ -991,7 +991,7 @@ export const workItemTools: Tool[] = [
   {
     name: "migrate_enrichment_process",
     description:
-      "Migrate the Enrichment process template (with all custom fields, states, rules, and layout) from a source Azure DevOps org to the target org.",
+      "Migrate a process template (with enrichment custom fields, states, rules, and layout) from a source Azure DevOps org to the target org, then create a new project using that process.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1001,18 +1001,22 @@ export const workItemTools: Tool[] = [
         },
         sourceProject: {
           type: "string",
-          description: "Source project name that uses the Enrichment process.",
+          description: "Source project name that uses the process template.",
         },
         sourceProcessName: {
           type: "string",
-          description: "Name of the process template to migrate (e.g. 'Enrichment').",
+          description: "Name of the process template to migrate (e.g. 'Power Platform Agile', 'F&O Agile').",
         },
         sourcePat: {
           type: "string",
           description: "PAT token for the source Azure DevOps org.",
         },
+        newProjectName: {
+          type: "string",
+          description: "Name for the new project to create in the target org using the migrated process.",
+        },
       },
-      required: ["sourceOrgUrl", "sourceProject", "sourceProcessName", "sourcePat"],
+      required: ["sourceOrgUrl", "sourceProject", "sourceProcessName", "sourcePat", "newProjectName"],
     },
   },
 ];
@@ -1054,6 +1058,7 @@ interface ToolInput {
   sourceProject?: string;
   sourceProcessName?: string;
   sourcePat?: string;
+  newProjectName?: string;
 }
 
 interface WorkItemClients {
@@ -2697,44 +2702,53 @@ export async function handleWorkItemTool(
 
       case "migrate_enrichment_process": {
         const client = requireAzureClient(clients);
-        if (!input.sourceOrgUrl || !input.sourceProject || !input.sourceProcessName || !input.sourcePat) {
-          throw new Error("sourceOrgUrl, sourceProject, sourceProcessName, and sourcePat are all required.");
+        if (!input.sourceOrgUrl || !input.sourceProject || !input.sourceProcessName || !input.sourcePat || !input.newProjectName) {
+          throw new Error("sourceOrgUrl, sourceProject, sourceProcessName, sourcePat, and newProjectName are all required.");
         }
 
         const targetOrgUrl = client.getOrgUrl();
         const targetPat = client.getPat();
 
-        // Check if the Enrichment process already exists in the target org (e.g. from a prior attempt)
+        // Check if the process already exists in the target org (reuse from a prior migration)
         const existing = await checkEnrichmentProcessExists(targetOrgUrl, targetPat);
+        let processId: string;
+        let processName: string;
+
         if (existing.found && existing.processId) {
-          logger.info("Enrichment process already exists in target org — assigning to project", {
-            processName: existing.processName,
-            processId: existing.processId,
+          processId = existing.processId;
+          processName = existing.processName ?? input.sourceProcessName;
+          logger.info("Enrichment process already exists in target org — reusing", { processName, processId });
+        } else {
+          const migrationResult = await migrateProcess({
+            sourceOrgUrl: input.sourceOrgUrl,
+            sourceProject: input.sourceProject,
+            sourceProcessName: input.sourceProcessName,
+            sourcePat: input.sourcePat,
+            targetOrgUrl,
+            targetProject: input.newProjectName,
+            targetPat,
           });
-          await assignProcessToProject(targetOrgUrl, targetPat, input.project, existing.processId);
-          return JSON.stringify({
-            result: "success",
-            message: `Enrichment process "${existing.processName}" already existed — assigned to project "${input.project}".`,
-          });
+          processId = migrationResult.processId;
+          processName = migrationResult.processName;
         }
 
-        // Migrate from source
-        const migrationResult = await migrateProcess({
-          sourceOrgUrl: input.sourceOrgUrl,
-          sourceProject: input.sourceProject,
-          sourceProcessName: input.sourceProcessName,
-          sourcePat: input.sourcePat,
+        // Create new project using the migrated process
+        const newProject = await createProjectWithProcess(
           targetOrgUrl,
-          targetProject: input.project,
           targetPat,
-        });
+          input.newProjectName,
+          processId,
+        );
 
-        // Assign the newly created process to the target project
-        await assignProcessToProject(targetOrgUrl, targetPat, input.project, migrationResult.processId);
+        const boardUrl = `${targetOrgUrl}/${encodeURIComponent(newProject.projectName)}/_backlogs/backlog`;
 
         return JSON.stringify({
           result: "success",
-          message: `Enrichment process "${migrationResult.processName}" migrated and assigned to project "${input.project}".`,
+          message: `Process "${processName}" migrated and new project "${newProject.projectName}" created.`,
+          processName,
+          newProjectName: newProject.projectName,
+          newProjectId: newProject.projectId,
+          boardUrl,
         });
       }
 

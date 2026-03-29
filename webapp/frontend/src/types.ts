@@ -137,9 +137,15 @@ export interface MigrateEnrichmentPayload {
   sourceProject: string;
   sourceProcessName: string;
   sourcePat: string;
+  newProjectName: string;
 }
 
 export interface MigrateEnrichmentResult {
   result: string;
   message: string;
+  processName?: string;
+  newProjectName?: string;
+  newProjectId?: string;
+  boardUrl?: string;
+  setupState?: SetupConfigState;
 }

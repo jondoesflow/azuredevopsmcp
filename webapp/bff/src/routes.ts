@@ -243,14 +243,15 @@ export function createApiRouter(config: AppConfig) {
 
   router.post("/setup/migrate-enrichment", processRateLimit, async (req: Request, res: Response) => {
     try {
-      const { sourceOrgUrl, sourceProject, sourceProcessName, sourcePat } = req.body as {
+      const { sourceOrgUrl, sourceProject, sourceProcessName, sourcePat, newProjectName } = req.body as {
         sourceOrgUrl?: string;
         sourceProject?: string;
         sourceProcessName?: string;
         sourcePat?: string;
+        newProjectName?: string;
       };
-      if (!sourceOrgUrl || !sourceProject || !sourceProcessName || !sourcePat) {
-        res.status(400).json({ error: "sourceOrgUrl, sourceProject, sourceProcessName, and sourcePat are required." });
+      if (!sourceOrgUrl || !sourceProject || !sourceProcessName || !sourcePat || !newProjectName) {
+        res.status(400).json({ error: "sourceOrgUrl, sourceProject, sourceProcessName, sourcePat, and newProjectName are required." });
         return;
       }
       const mcpClient = createMcpClient(req);
@@ -267,8 +268,16 @@ export function createApiRouter(config: AppConfig) {
         sourceProject: sourceProject.trim(),
         sourceProcessName: sourceProcessName.trim(),
         sourcePat: sourcePat.trim(),
-      });
-      res.json(result);
+        newProjectName: newProjectName.trim(),
+      }) as { result?: string; newProjectName?: string; [key: string]: unknown };
+
+      // On success, switch the session to the new project
+      if (result.result === "success" && result.newProjectName) {
+        setupStore.save({ azureDevOpsProject: result.newProjectName as string }, userId);
+        setupStore.markValidated(userId);
+      }
+
+      res.json({ ...result, setupState: setupStore.getState(userId) });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Enrichment process migration failed";
       res.status(502).json({ error: message });

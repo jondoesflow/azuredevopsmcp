@@ -661,40 +661,72 @@ export async function migrateProcess(migrationConfig: ProcessMigrationConfig): P
 }
 
 // ---------------------------------------------------------------------------
-// Assign the migrated process to a target project
+// Create a new project using the migrated process
 // ---------------------------------------------------------------------------
 
-export async function assignProcessToProject(
+export async function createProjectWithProcess(
   orgUrl: string,
   pat: string,
   projectName: string,
   processId: string,
-): Promise<void> {
-  logger.info("Assigning migrated process to project…", { projectName, processId });
+  description?: string,
+): Promise<{ projectName: string; projectId: string }> {
+  logger.info("Creating new project with enrichment process…", { projectName, processId });
 
-  // Get the project ID first
-  const project = await adoFetch<{ id: string; name: string }>(
+  const createResult = await adoFetch<{ id: string; status: string; url: string }>(
     orgUrl,
     pat,
-    `_apis/projects/${encodeURIComponent(projectName)}`,
-  );
-
-  // Update the project's process template
-  await adoFetch(
-    orgUrl,
-    pat,
-    `_apis/projects/${project.id}`,
-    "PATCH",
+    "_apis/projects",
+    "POST",
     {
+      name: projectName,
+      description: description ?? "Created by MCP Backlog Assistant with Enrichment process",
       capabilities: {
-        processTemplate: {
-          templateTypeId: processId,
-        },
+        versioncontrol: { sourceControlType: "Git" },
+        processTemplate: { templateTypeId: processId },
       },
     },
   );
 
-  logger.info("Process assigned to project successfully", { projectName, processId });
+  // Project creation is async — poll the operation status
+  const operationId = createResult.id;
+  if (!operationId) {
+    throw new Error("Project creation did not return an operation ID.");
+  }
+
+  logger.info("Project creation started, polling operation…", { operationId });
+
+  const maxAttempts = 30;
+  const pollIntervalMs = 2000;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+
+    const status = await adoFetch<{ id: string; status: string }>(
+      orgUrl,
+      pat,
+      `_apis/operations/${operationId}`,
+    );
+
+    logger.debug(`  Poll ${attempt}/${maxAttempts}: status=${status.status}`);
+
+    if (status.status === "succeeded") {
+      // Get the project ID
+      const project = await adoFetch<{ id: string; name: string }>(
+        orgUrl,
+        pat,
+        `_apis/projects/${encodeURIComponent(projectName)}`,
+      );
+      logger.info("Project created successfully", { projectName, projectId: project.id });
+      return { projectName, projectId: project.id };
+    }
+
+    if (status.status === "failed" || status.status === "cancelled") {
+      throw new Error(`Project creation ${status.status}. Check Azure DevOps for details.`);
+    }
+  }
+
+  throw new Error(`Project creation timed out after ${maxAttempts * pollIntervalMs / 1000}s. The project may still be provisioning — check Azure DevOps.`);
 }
 
 // ---------------------------------------------------------------------------

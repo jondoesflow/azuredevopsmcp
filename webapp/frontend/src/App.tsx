@@ -199,6 +199,7 @@ export function App() {
   const [sourceProject, setSourceProject] = useState("");
   const [sourceProcessName, setSourceProcessName] = useState("");
   const [sourcePat, setSourcePat] = useState("");
+  const [newProjectName, setNewProjectName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [terminalLines, setTerminalLines] = useState<string[]>([
@@ -282,7 +283,7 @@ export function App() {
           <p>After validation the app automatically checks if your project has the 22 enrichment custom fields (confidence scores, dependencies, quality metrics, etc.).</p>
           <ul>
             <li><strong>Fields present</strong> — you will see &ldquo;Enrichment fields verified&rdquo; and can proceed.</li>
-            <li><strong>Fields missing</strong> — a migration form appears. Provide the <strong>Source Org URL</strong>, <strong>Source Project</strong>, <strong>Source Process Name</strong>, and <strong>Source PAT</strong> for an Azure DevOps org that already has the Enrichment process template, then click <strong>Migrate Process</strong>.</li>
+            <li><strong>Fields missing</strong> — a migration form appears. Provide the <strong>Source Org URL</strong>, <strong>Source Project</strong>, <strong>Source Process Name</strong> (e.g. &ldquo;Power Platform Agile&rdquo;, &ldquo;F&amp;O Agile&rdquo;), <strong>Source PAT</strong>, and a <strong>New Project Name</strong>. Click <strong>Migrate &amp; Create Project</strong> to import the process and create a new project using it.</li>
           </ul>
 
           <h3>Step 2: Upload a document</h3>
@@ -661,11 +662,23 @@ export function App() {
         sourceProject: sourceProject.trim(),
         sourceProcessName: sourceProcessName.trim(),
         sourcePat: sourcePat.trim(),
+        newProjectName: newProjectName.trim(),
       });
       logLine("Migration complete: " + result.message);
       setShowMigrationForm(false);
+
+      // Refresh setup state — BFF switched the active project to the new one
+      if (result.setupState) {
+        hydrateSetup(result.setupState);
+      } else {
+        const refreshedState = await getSetupConfig(token);
+        hydrateSetup(refreshedState);
+      }
       setEnrichmentCheck({ ...enrichmentCheck!, hasEnrichmentFields: true, missingFieldCount: 0, missingFields: [] });
-      setStatus("Enrichment process migrated successfully.");
+      setStatus(`Project "${result.newProjectName}" created with process "${result.processName}".`);
+      if (result.boardUrl) {
+        logLine(`Board: ${result.boardUrl}`);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Migration failed";
       logLine("Migration failed: " + msg);
@@ -898,10 +911,10 @@ export function App() {
                   <p style={{ margin: 0, color: "#2e7d32", fontWeight: 600 }}>Enrichment fields verified in process &ldquo;{enrichmentCheck.processName}&rdquo;.</p>
                 ) : showMigrationForm && enrichmentCheck ? (
                   <div>
-                    <h3 style={{ margin: "0 0 8px" }}>Enrichment Process Migration Required</h3>
+                    <h3 style={{ margin: "0 0 8px" }}>Process Migration &amp; New Project Required</h3>
                     <p style={{ margin: "0 0 12px" }}>
                       Your project&apos;s process template (&ldquo;{enrichmentCheck.processName}&rdquo;) is missing {enrichmentCheck.missingFieldCount} enrichment custom fields.
-                      Provide the connection details of an Azure DevOps org that has the Enrichment process.
+                      Provide the source org with the desired process template and a name for a <strong>new project</strong> to create with it.
                     </p>
                     <label>Source Org URL
                       <input type="text" value={sourceOrgUrl} onChange={(e) => setSourceOrgUrl(e.target.value)} placeholder="https://dev.azure.com/source-org" disabled={migrating} />
@@ -915,9 +928,12 @@ export function App() {
                     <label>Source PAT
                       <input type="password" value={sourcePat} onChange={(e) => setSourcePat(e.target.value)} placeholder="PAT for source org" disabled={migrating} />
                     </label>
+                    <label>New Project Name
+                      <input type="text" value={newProjectName} onChange={(e) => setNewProjectName(e.target.value)} placeholder="e.g. MyProject-PowerPlatform" disabled={migrating} />
+                    </label>
                     <div className="setup-actions" style={{ marginTop: 10 }}>
-                      <button disabled={migrating || !sourceOrgUrl.trim() || !sourceProject.trim() || !sourceProcessName.trim() || !sourcePat.trim()} onClick={() => void handleMigrateEnrichment()}>
-                        {migrating ? "Migrating process..." : "Migrate Process"}
+                      <button disabled={migrating || !sourceOrgUrl.trim() || !sourceProject.trim() || !sourceProcessName.trim() || !sourcePat.trim() || !newProjectName.trim()} onClick={() => void handleMigrateEnrichment()}>
+                        {migrating ? "Creating project..." : "Migrate & Create Project"}
                       </button>
                     </div>
                   </div>

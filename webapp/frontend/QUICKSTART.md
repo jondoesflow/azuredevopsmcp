@@ -26,11 +26,12 @@ After validation, the app automatically checks if your project's process templat
 
 - If fields are present: you'll see "Enrichment fields verified" and can proceed.
 - If fields are missing: a migration form appears. Enter:
-  - **Source Org URL**: Azure DevOps org that has the Enrichment process
-  - **Source Project**: Project using the Enrichment process
-  - **Source Process Name**: Name of the process (e.g. "Enrichment")
+  - **Source Org URL**: Azure DevOps org that has the desired process template
+  - **Source Project**: Project using the process (e.g. Power Platform Agile, F&O Agile)
+  - **Source Process Name**: Name of the process template to import
   - **Source PAT**: PAT token for the source org
-- Click **Migrate Process** to copy the process template to your target org.
+  - **New Project Name**: Name for the new project to create in your target org
+- Click **Migrate & Create Project** to import the process template and create a new project using it. The session automatically switches to the new project.
 
 ## 2) Upload file
 
