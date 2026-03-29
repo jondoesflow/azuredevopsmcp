@@ -282,7 +282,7 @@ export function App() {
   async function loadHealthData() {
     setHealthLoading(true);
     try {
-      const token = await acquireToken();
+      const token = await getAccessToken();
       if (!token) return;
       const data = await getBacklogHealth(token);
       setHealthData(data);
@@ -295,7 +295,7 @@ export function App() {
 
   async function handleExport() {
     try {
-      const token = await acquireToken();
+      const token = await getAccessToken();
       if (!token) return;
       logLine("Exporting backlog to CSV...");
       await downloadExport(token, "csv");
@@ -307,7 +307,7 @@ export function App() {
 
   async function loadStakeholderSummary() {
     try {
-      const token = await acquireToken();
+      const token = await getAccessToken();
       if (!token) return;
       const summary = await getStakeholderSummary(token);
       setStakeholderSummary(summary);
@@ -505,7 +505,7 @@ export function App() {
     setRefinementSuggestion(null);
     setRefinementLoading(true);
     try {
-      const token = await acquireToken();
+      const token = await getAccessToken();
       if (!token) return;
       const suggestion = await suggestRefinement(token, workItemId);
       setRefinementSuggestion(suggestion);
@@ -520,7 +520,7 @@ export function App() {
   async function handleApplyRefinement(applyWhat: "all" | "title" | "description" | "ac") {
     if (!refinementSuggestion) return;
     try {
-      const token = await acquireToken();
+      const token = await getAccessToken();
       if (!token) return;
       const payload: Record<string, unknown> = { workItemId: refinementSuggestion.workItemId };
       if ((applyWhat === "all" || applyWhat === "title") && refinementSuggestion.suggestedTitle) {
@@ -546,7 +546,7 @@ export function App() {
     if (!selectedFileName) { logLine("Select a file first."); return; }
     setRraidLoading(true);
     try {
-      const token = await acquireToken();
+      const token = await getAccessToken();
       if (!token) return;
       const result = await extractRRAID(token, selectedFileName);
       setRraidItems(result.items || []);
@@ -562,7 +562,7 @@ export function App() {
     const selected = rraidItems.filter((item) => rraidSelected.has(item.id));
     if (selected.length === 0) { logLine("Select RRAID items to create."); return; }
     try {
-      const token = await acquireToken();
+      const token = await getAccessToken();
       if (!token) return;
       logLine(`Creating ${selected.length} RRAID items in ADO...`);
       const result = await createRRAIDItems(token, selected);
@@ -576,7 +576,7 @@ export function App() {
   async function handleLoadRRAIDFromADO() {
     setRraidLoading(true);
     try {
-      const token = await acquireToken();
+      const token = await getAccessToken();
       if (!token) return;
       const cat = rraidFilter === "All" ? undefined : rraidFilter;
       const result = await listRRAIDItems(token, cat);
