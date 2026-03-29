@@ -1096,7 +1096,7 @@ export function App() {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const ALLOWED_EXTENSIONS = [".txt", ".md", ".csv", ".json", ".xml", ".log", ".docx", ".pdf", ".doc", ".xlsx", ".pptx"];
+    const ALLOWED_EXTENSIONS = [".pdf", ".docx", ".xlsx", ".txt", ".md"];
     const ext = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
     if (!ALLOWED_EXTENSIONS.includes(ext)) {
       setError(`Unsupported file type '${ext}'. Accepted: ${ALLOWED_EXTENSIONS.join(", ")}`);
@@ -1511,8 +1511,8 @@ export function App() {
                 <p>Project: <strong>{configuredProject || "(from validated setup)"}</strong></p>
 
                 <label className="upload">
-                  Upload document
-                  <input type="file" accept=".txt,.md,.csv,.json,.xml,.log,.docx,.pdf,.doc,.xlsx,.pptx" onChange={onUpload} disabled={busy} />
+                  Upload document (PDF, Word, Excel, Text, Markdown)
+                  <input type="file" accept=".pdf,.docx,.xlsx,.txt,.md" onChange={onUpload} disabled={busy} />
                 </label>
                 {renderInlineSpinner("upload", "Uploading file...")}
 

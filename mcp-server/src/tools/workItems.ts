@@ -1205,6 +1205,57 @@ async function resolveContentUrl(url: string, fileName: string): Promise<{ conte
   return JSON.stringify({ result: "error", message: "contentUrl must be a data: URI or http(s) URL" });
 }
 
+async function extractTextFromBinary(base64Content: string, fileName: string): Promise<string> {
+  const ext = fileName.toLowerCase().slice(fileName.lastIndexOf("."));
+  const buffer = Buffer.from(base64Content, "base64");
+
+  if (ext === ".pdf") {
+    try {
+      const pdfParse = (await import("pdf-parse")).default;
+      const result = await pdfParse(buffer);
+      logger.info("PDF text extracted", { fileName, pages: result.numpages, textLength: result.text.length });
+      return result.text;
+    } catch (err) {
+      logger.warn("PDF parse failed, storing raw base64", { fileName, error: String(err) });
+      return "";
+    }
+  }
+
+  if (ext === ".docx" || ext === ".doc") {
+    try {
+      const mammoth = await import("mammoth");
+      const result = await mammoth.extractRawText({ buffer });
+      logger.info("DOCX text extracted", { fileName, textLength: result.value.length });
+      return result.value;
+    } catch (err) {
+      logger.warn("DOCX parse failed", { fileName, error: String(err) });
+      return "";
+    }
+  }
+
+  if (ext === ".xlsx") {
+    try {
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.read(buffer, { type: "buffer" });
+      const sheets: string[] = [];
+      for (const sheetName of workbook.SheetNames) {
+        const sheet = workbook.Sheets[sheetName];
+        if (sheet) {
+          sheets.push(`--- ${sheetName} ---\n${XLSX.utils.sheet_to_csv(sheet)}`);
+        }
+      }
+      const text = sheets.join("\n\n");
+      logger.info("XLSX text extracted", { fileName, sheets: workbook.SheetNames.length, textLength: text.length });
+      return text;
+    } catch (err) {
+      logger.warn("XLSX parse failed", { fileName, error: String(err) });
+      return "";
+    }
+  }
+
+  return "";
+}
+
 async function handleProcessTranscript(input: ToolInput, fileStore: ReturnType<typeof getFileStore>): Promise<string> {
   const fileName = input.fileName!;
   let content = "";
@@ -1216,7 +1267,16 @@ async function handleProcessTranscript(input: ToolInput, fileStore: ReturnType<t
     content = resolved.content;
     contentType = resolved.contentType;
   } else if (input.fileContent) {
-    content = tryDecodeBase64(input.fileContent);
+    const ext = fileName.toLowerCase().slice(fileName.lastIndexOf("."));
+    if ([".pdf", ".docx", ".doc", ".xlsx"].includes(ext)) {
+      // Binary file — extract text from base64
+      content = await extractTextFromBinary(input.fileContent, fileName);
+      if (!content) {
+        return JSON.stringify({ result: "error", message: `Failed to extract text from ${ext} file. The file may be corrupted or password-protected.` });
+      }
+    } else {
+      content = tryDecodeBase64(input.fileContent);
+    }
   } else {
     const existing = fileStore.get(fileName);
     if (existing) {

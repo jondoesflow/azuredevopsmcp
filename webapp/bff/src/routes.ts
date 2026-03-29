@@ -83,7 +83,7 @@ function parseProcessBody(req: Request): { project?: string; analysisMode: "proc
   };
 }
 
-const ALLOWED_EXTENSIONS = [".txt", ".md", ".csv", ".json", ".xml", ".log", ".docx", ".pdf", ".doc", ".xlsx", ".pptx"];
+const ALLOWED_EXTENSIONS = [".pdf", ".docx", ".xlsx", ".txt", ".md"];
 
 function isSupportedFile(fileName: string): boolean {
   const ext = fileName.toLowerCase().slice(fileName.lastIndexOf("."));
