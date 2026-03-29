@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
-import { SetupConnectionInput, SetupConnectionState } from "./types.js";
+import { ProcessType, SetupConnectionInput, SetupConnectionState } from "./types.js";
 
 // Derive a 32-byte key from SETUP_ENCRYPTION_KEY env var (or a fallback for dev).
 // In production, set SETUP_ENCRYPTION_KEY to a long random string.
@@ -50,6 +50,7 @@ const envPath = path.join(__dirname, "..", ".env");
 const perUserPath = path.join(__dirname, "..", ".setup-users.json");
 
 interface ConnectionDefaults {
+  processType?: ProcessType;
   azureDevOpsOrg?: string;
   azureDevOpsUrl?: string;
   azureDevOpsProject?: string;
@@ -174,6 +175,7 @@ export class SetupStore {
   private resolveForUser(userId?: string): ConnectionDefaults {
     const userConfig = userId ? readPerUser()[userId] : undefined;
     return {
+      processType: userConfig?.processType ?? this.defaults.processType,
       azureDevOpsOrg: userConfig?.azureDevOpsOrg ?? normalizeOptional(process.env.AZURE_DEVOPS_ORG) ?? this.defaults.azureDevOpsOrg,
       azureDevOpsUrl: userConfig?.azureDevOpsUrl ?? normalizeOptional(process.env.AZURE_DEVOPS_URL) ?? this.defaults.azureDevOpsUrl,
       azureDevOpsProject: userConfig?.azureDevOpsProject ?? normalizeOptional(process.env.AZURE_DEVOPS_PROJECT) ?? this.defaults.azureDevOpsProject,
@@ -185,6 +187,7 @@ export class SetupStore {
   getState(userId?: string): SetupConnectionState {
     const resolved = this.resolveForUser(userId);
     return {
+      processType: resolved.processType,
       azureDevOpsOrg: resolved.azureDevOpsOrg,
       azureDevOpsUrl: resolved.azureDevOpsUrl,
       azureDevOpsProject: resolved.azureDevOpsProject,
@@ -203,6 +206,7 @@ export class SetupStore {
   save(input: SetupConnectionInput, userId?: string): SetupConnectionState {
     const current = this.resolveForUser(userId);
     const merged: ConnectionDefaults = {
+      processType: input.processType ?? current.processType,
       azureDevOpsOrg: normalizeOptional(input.azureDevOpsOrg) ?? current.azureDevOpsOrg,
       azureDevOpsUrl: normalizeOptional(input.azureDevOpsUrl) ?? current.azureDevOpsUrl,
       azureDevOpsProject: normalizeOptional(input.azureDevOpsProject) ?? current.azureDevOpsProject,
@@ -220,6 +224,7 @@ export class SetupStore {
       return this.getState(userId);
     }
 
+    this.defaults.processType = merged.processType;
     this.defaults.azureDevOpsOrg = merged.azureDevOpsOrg;
     this.defaults.azureDevOpsUrl = merged.azureDevOpsUrl;
     this.defaults.azureDevOpsProject = merged.azureDevOpsProject;

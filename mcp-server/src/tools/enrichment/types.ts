@@ -87,3 +87,22 @@ export interface EnrichmentResult {
   warnings: string[];
   idempotencyKey: string;
 }
+
+export interface BacklogHealthSummary {
+  totalStories: number;
+  ragDistribution: { red: number; amber: number; green: number; unscored: number };
+  confidenceDistribution: { bucket: string; count: number }[];
+  qualityDistribution: { bucket: string; count: number }[];
+  effortBreakdown: Record<string, number>;
+  dependencyGraph: { id: number; title: string; dependsOn: string[]; blocks: string[] }[];
+  missingPiecesHeatmap: { issue: string; count: number }[];
+  averageConfidence: number;
+  averageQuality: number;
+  coverageGaps: {
+    noConfidence: number;
+    noDependencies: number;
+    noEffort: number;
+    noQuality: number;
+    noDoD: number;
+  };
+}

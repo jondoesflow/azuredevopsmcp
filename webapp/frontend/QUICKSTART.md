@@ -6,7 +6,14 @@ This guide is focused on the **user journey in the app UI**.
 
 Open the app and sign in. After sign-in, you will see the backlog assistant home screen.
 
-## 1) Save and validate connection
+## 1) Choose process type
+
+Select the process template your Azure DevOps project uses:
+
+- **Agile with Enrichment** — for projects using the "Agile with Enrichment" process
+- **Finance & Operations** — for projects using the "Finance and Operations" process
+
+## 2) Save and validate connection
 
 In **Step 1: Enter connection details**:
 
@@ -20,19 +27,15 @@ What to expect:
 - Inline spinner while save/validation runs.
 - A **Successfully Validated** confirmation modal when validation succeeds.
 
-## 1b) Enrichment field check
+## 2b) Process template check
 
-After validation, the app automatically checks if your project's process template has the 22 enrichment custom fields.
+After validation, the app automatically checks that your project uses the process template you selected in step 1.
 
-- If fields are present: you'll see "Enrichment fields verified" and can proceed.
-- If fields are missing: a migration form appears. Enter:
-  - **Source Org URL**: Azure DevOps org that has the Enrichment process
-  - **Source Project**: Project using the Enrichment process
-  - **Source Process Name**: Name of the process (e.g. "Enrichment")
-  - **Source PAT**: PAT token for the source org
-- Click **Migrate Process** to copy the process template to your target org.
+- If process matches: you'll see "Process verified" and can proceed.
+- If process doesn't match: the app shows step-by-step instructions to change your project's process in Azure DevOps Organization Settings.
+- After changing the process, return to the app and click **Validate connection** again.
 
-## 2) Upload file
+## 3) Upload file
 
 In **Step 2: Upload + analysis**:
 
@@ -44,7 +47,7 @@ What to expect:
 - Inline spinner while upload runs.
 - Terminal logs showing upload progress and completion.
 
-## 3) Create backlog
+## 4) Create backlog
 
 1. Select **Analysis mode** (`to-be process` or `transcript`).
 2. Click **Create Backlog**.
@@ -56,7 +59,7 @@ What to expect:
 - Rotating "fact" message during longer processing.
 - Success status message when complete.
 
-## 4) Manage uploaded files
+## 5) Manage uploaded files
 
 Use:
 

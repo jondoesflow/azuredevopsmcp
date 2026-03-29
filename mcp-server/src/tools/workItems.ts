@@ -1,6 +1,6 @@
 import { AzureDevOpsClient } from "../azureDevOpsClient.js";
 import { logger } from "../logger.js";
-import { checkProjectEnrichmentFields, checkEnrichmentProcessExists, migrateProcess, assignProcessToProject } from "../processMigration.js";
+import { checkProjectProcess, checkEnrichmentProcessExists, migrateProcess, createProjectWithProcess } from "../processMigration.js";
 import { enrichGeneratedWorkItems } from "./enrichment/orchestrator.js";
 import {
   EnrichmentFlags,
@@ -8,6 +8,8 @@ import {
   WorkItemDependencies,
   WorkItemEnrichment,
 } from "./enrichment/types.js";
+import { generateRefinementSuggestion } from "./enrichment/refinement.js";
+import { extractRRAID, matchRRAIDToStories, type RRAIDItem } from "./rraid.js";
 
 // Strip HTML tags and decode entities to plain text
 function stripHtml(html: string | undefined | null): string {
@@ -974,9 +976,9 @@ export const workItemTools: Tool[] = [
     },
   },
   {
-    name: "check_enrichment_fields",
+    name: "check_project_process",
     description:
-      "Check whether the target Azure DevOps project's process template includes the Enrichment custom fields required for backlog enrichment.",
+      "Check whether the target Azure DevOps project uses the expected process template.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -984,14 +986,18 @@ export const workItemTools: Tool[] = [
           type: "string",
           description: "Azure DevOps project name.",
         },
+        expectedProcessName: {
+          type: "string",
+          description: "Expected process template name (e.g. 'Agile with Enrichment', 'Finance and Operations').",
+        },
       },
-      required: ["project"],
+      required: ["project", "expectedProcessName"],
     },
   },
   {
     name: "migrate_enrichment_process",
     description:
-      "Migrate the Enrichment process template (with all custom fields, states, rules, and layout) from a source Azure DevOps org to the target org.",
+      "Migrate a process template (with enrichment custom fields, states, rules, and layout) from a source Azure DevOps org to the target org, then create a new project using that process.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1001,18 +1007,106 @@ export const workItemTools: Tool[] = [
         },
         sourceProject: {
           type: "string",
-          description: "Source project name that uses the Enrichment process.",
+          description: "Source project name that uses the process template.",
         },
         sourceProcessName: {
           type: "string",
-          description: "Name of the process template to migrate (e.g. 'Enrichment').",
+          description: "Name of the process template to migrate (e.g. 'Power Platform Agile', 'F&O Agile').",
         },
         sourcePat: {
           type: "string",
           description: "PAT token for the source Azure DevOps org.",
         },
+        newProjectName: {
+          type: "string",
+          description: "Name for the new project to create in the target org using the migrated process.",
+        },
       },
-      required: ["sourceOrgUrl", "sourceProject", "sourceProcessName", "sourcePat"],
+      required: ["sourceOrgUrl", "sourceProject", "sourceProcessName", "sourcePat", "newProjectName"],
+    },
+  },
+  {
+    name: "get_backlog_health",
+    description: "Queries all user stories with enrichment fields and returns aggregated health metrics for the backlog dashboard.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        project: {
+          type: "string",
+          description: "Azure DevOps project name.",
+        },
+        top: {
+          type: "number",
+          description: "Maximum number of stories to analyze (default 500).",
+        },
+      },
+      required: ["project"],
+    },
+  },
+  {
+    name: "refine_story",
+    description: "Reads a user story from ADO, analyzes weak areas, and generates improved title, description, and acceptance criteria suggestions.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        project: {
+          type: "string",
+          description: "Azure DevOps project name.",
+        },
+        workItemId: {
+          type: "number",
+          description: "The ID of the user story to refine.",
+        },
+      },
+      required: ["project", "workItemId"],
+    },
+  },
+  {
+    name: "extract_rraid",
+    description: "Analyzes document content to extract Risks, Requirements, Assumptions, Issues, and Dependencies (RRAID log).",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        fileName: { type: "string", description: "Name of the uploaded file to analyze." },
+        project: { type: "string", description: "Azure DevOps project name (for matching to existing stories)." },
+      },
+      required: ["fileName", "project"],
+    },
+  },
+  {
+    name: "create_rraid_items",
+    description: "Creates RRAID items as Issue work items in ADO with category tags and optional links to related stories.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        project: { type: "string", description: "Azure DevOps project name." },
+        items: {
+          type: "array",
+          description: "Array of RRAID items to create.",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              description: { type: "string" },
+              category: { type: "string" },
+              severity: { type: "string" },
+            },
+          },
+        },
+      },
+      required: ["project", "items"],
+    },
+  },
+  {
+    name: "list_rraid_items",
+    description: "Lists RRAID items (Issues tagged with RRAID:*) from the project.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        project: { type: "string", description: "Azure DevOps project name." },
+        category: { type: "string", description: "Optional filter by RRAID category (Risk, Requirement, Assumption, Issue, Dependency)." },
+      },
+      required: ["project"],
     },
   },
 ];
@@ -1050,10 +1144,14 @@ interface ToolInput {
   includePreview?: boolean;
   previewFileName?: string;
   reviewOnly?: boolean;
+  expectedProcessName?: string;
   sourceOrgUrl?: string;
   sourceProject?: string;
   sourceProcessName?: string;
   sourcePat?: string;
+  newProjectName?: string;
+  items?: Array<{ title: string; description: string; category: string; severity: string }>;
+  category?: string;
 }
 
 interface WorkItemClients {
@@ -2681,62 +2779,306 @@ export async function handleWorkItemTool(
         return JSON.stringify({ result: "success", id: updated.id });
       }
 
-      case "check_enrichment_fields": {
+      case "check_project_process": {
         const client = requireAzureClient(clients);
-        const orgUrl = client.getOrgUrl();
-        const pat = client.getPat();
-        const result = await checkProjectEnrichmentFields(orgUrl, pat, input.project);
+        if (!input.expectedProcessName) {
+          throw new Error("expectedProcessName is required.");
+        }
+        const result = await checkProjectProcess(
+          client.getOrgUrl(),
+          client.getPat(),
+          input.project,
+          input.expectedProcessName,
+        );
         return JSON.stringify({
           result: "success",
-          hasEnrichmentFields: result.hasEnrichmentFields,
+          hasCorrectProcess: result.hasCorrectProcess,
           processName: result.processName,
-          missingFieldCount: result.missingFields.length,
-          missingFields: result.missingFields,
+          expectedProcessName: result.expectedProcessName,
         });
       }
 
       case "migrate_enrichment_process": {
         const client = requireAzureClient(clients);
-        if (!input.sourceOrgUrl || !input.sourceProject || !input.sourceProcessName || !input.sourcePat) {
-          throw new Error("sourceOrgUrl, sourceProject, sourceProcessName, and sourcePat are all required.");
+        if (!input.sourceOrgUrl || !input.sourceProject || !input.sourceProcessName || !input.sourcePat || !input.newProjectName) {
+          throw new Error("sourceOrgUrl, sourceProject, sourceProcessName, sourcePat, and newProjectName are all required.");
         }
 
         const targetOrgUrl = client.getOrgUrl();
         const targetPat = client.getPat();
 
-        // Check if the Enrichment process already exists in the target org (e.g. from a prior attempt)
+        // Check if the process already exists in the target org (reuse from a prior migration)
         const existing = await checkEnrichmentProcessExists(targetOrgUrl, targetPat);
+        let processId: string;
+        let processName: string;
+
         if (existing.found && existing.processId) {
-          logger.info("Enrichment process already exists in target org — assigning to project", {
-            processName: existing.processName,
-            processId: existing.processId,
+          processId = existing.processId;
+          processName = existing.processName ?? input.sourceProcessName;
+          logger.info("Enrichment process already exists in target org — reusing", { processName, processId });
+        } else {
+          const migrationResult = await migrateProcess({
+            sourceOrgUrl: input.sourceOrgUrl,
+            sourceProject: input.sourceProject,
+            sourceProcessName: input.sourceProcessName,
+            sourcePat: input.sourcePat,
+            targetOrgUrl,
+            targetProject: input.newProjectName,
+            targetPat,
           });
-          await assignProcessToProject(targetOrgUrl, targetPat, input.project, existing.processId);
-          return JSON.stringify({
-            result: "success",
-            message: `Enrichment process "${existing.processName}" already existed — assigned to project "${input.project}".`,
-          });
+          processId = migrationResult.processId;
+          processName = migrationResult.processName;
         }
 
-        // Migrate from source
-        const migrationResult = await migrateProcess({
-          sourceOrgUrl: input.sourceOrgUrl,
-          sourceProject: input.sourceProject,
-          sourceProcessName: input.sourceProcessName,
-          sourcePat: input.sourcePat,
+        // Create new project using the migrated process
+        const newProject = await createProjectWithProcess(
           targetOrgUrl,
-          targetProject: input.project,
           targetPat,
-        });
+          input.newProjectName,
+          processId,
+        );
 
-        // Assign the newly created process to the target project
-        await assignProcessToProject(targetOrgUrl, targetPat, input.project, migrationResult.processId);
+        const boardUrl = `${targetOrgUrl}/${encodeURIComponent(newProject.projectName)}/_backlogs/backlog`;
 
         return JSON.stringify({
           result: "success",
-          message: `Enrichment process "${migrationResult.processName}" migrated and assigned to project "${input.project}".`,
+          message: `Process "${processName}" migrated and new project "${newProject.projectName}" created.`,
+          processName,
+          newProjectName: newProject.projectName,
+          newProjectId: newProject.projectId,
+          boardUrl,
         });
       }
+
+    case "get_backlog_health": {
+      const client = requireAzureClient(clients);
+      const stories = await client.listWorkItems({
+        project: input.project,
+        witType: "User Story",
+        top: input.top || 500,
+      });
+
+      let totalStories = stories.length;
+      let red = 0, amber = 0, green = 0, unscored = 0;
+      const confidenceBuckets = [0, 0, 0, 0, 0]; // 0-20, 20-40, 40-60, 60-80, 80-100
+      const qualityBuckets = [0, 0, 0, 0, 0];
+      const effortBreakdown: Record<string, number> = { XS: 0, S: 0, M: 0, L: 0, XL: 0, Unknown: 0 };
+      const dependencyGraph: { id: number; title: string; dependsOn: string[]; blocks: string[] }[] = [];
+      const missingPiecesMap: Record<string, number> = {};
+      let confidenceSum = 0, confidenceCount = 0;
+      let qualitySum = 0, qualityCount = 0;
+      let noConfidence = 0, noDependencies = 0, noEffort = 0, noQuality = 0, noDoD = 0;
+
+      for (const story of stories) {
+        const fields = story.fields || {};
+        const confOverall = Number(fields["Custom.EnrichmentConfidenceOverall"]) || 0;
+        const qualScore = Number(fields["Custom.EnrichmentQualityScore"]) || 0;
+        const effortSize = String(fields["Custom.EnrichmentEffortTShirtSize"] || "");
+        const depsOn = String(fields["Custom.EnrichmentDependenciesDependsOn"] || "");
+        const blocks = String(fields["Custom.EnrichmentDependenciesBlocks"] || "");
+        const missingIssues = String(fields["Custom.EnrichmentMissingPiecesIssues"] || "");
+        const dod = String(fields["Custom.EnrichmentDefinitionOfDone"] || "");
+
+        // RAG distribution
+        if (!fields["Custom.EnrichmentConfidenceOverall"]) {
+          unscored++;
+          noConfidence++;
+        } else if (confOverall < 40) {
+          red++;
+        } else if (confOverall < 70) {
+          amber++;
+        } else {
+          green++;
+        }
+
+        // Confidence histogram
+        if (fields["Custom.EnrichmentConfidenceOverall"]) {
+          const bucket = Math.min(Math.floor(confOverall / 20), 4);
+          confidenceBuckets[bucket]++;
+          confidenceSum += confOverall;
+          confidenceCount++;
+        }
+
+        // Quality histogram
+        if (fields["Custom.EnrichmentQualityScore"]) {
+          const qBucket = Math.min(Math.floor(qualScore / 20), 4);
+          qualityBuckets[qBucket]++;
+          qualitySum += qualScore;
+          qualityCount++;
+        } else {
+          noQuality++;
+        }
+
+        // Effort
+        if (effortSize && ["XS", "S", "M", "L", "XL"].includes(effortSize)) {
+          effortBreakdown[effortSize]++;
+        } else {
+          effortBreakdown["Unknown"]++;
+          noEffort++;
+        }
+
+        // Dependencies
+        if (!depsOn && !blocks) {
+          noDependencies++;
+        }
+        if (story.id) {
+          dependencyGraph.push({
+            id: story.id,
+            title: String(fields["System.Title"] || ""),
+            dependsOn: depsOn ? depsOn.split(",").map((s: string) => s.trim()).filter(Boolean) : [],
+            blocks: blocks ? blocks.split(",").map((s: string) => s.trim()).filter(Boolean) : [],
+          });
+        }
+
+        // Missing pieces heatmap
+        if (missingIssues) {
+          for (const issue of missingIssues.split(";").map((s: string) => s.trim()).filter(Boolean)) {
+            missingPiecesMap[issue] = (missingPiecesMap[issue] || 0) + 1;
+          }
+        }
+
+        // DoD coverage
+        if (!dod) {
+          noDoD++;
+        }
+      }
+
+      const missingPiecesHeatmap = Object.entries(missingPiecesMap)
+        .map(([issue, count]) => ({ issue, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 20);
+
+      const bucketLabels = ["0-20", "20-40", "40-60", "60-80", "80-100"];
+
+      return JSON.stringify({
+        result: "success",
+        totalStories,
+        ragDistribution: { red, amber, green, unscored },
+        confidenceDistribution: bucketLabels.map((bucket, i) => ({ bucket, count: confidenceBuckets[i] })),
+        qualityDistribution: bucketLabels.map((bucket, i) => ({ bucket, count: qualityBuckets[i] })),
+        effortBreakdown,
+        dependencyGraph: dependencyGraph.filter((d) => d.dependsOn.length > 0 || d.blocks.length > 0),
+        missingPiecesHeatmap,
+        averageConfidence: confidenceCount > 0 ? Math.round(confidenceSum / confidenceCount) : 0,
+        averageQuality: qualityCount > 0 ? Math.round(qualitySum / qualityCount) : 0,
+        coverageGaps: {
+          noConfidence,
+          noDependencies,
+          noEffort,
+          noQuality,
+          noDoD,
+        },
+      });
+    }
+
+    case "refine_story": {
+      const client = requireAzureClient(clients);
+      if (!input.workItemId) throw new Error("workItemId is required");
+      const story = await client.getWorkItem(input.project, input.workItemId);
+      const fields = story.fields || {};
+
+      const title = String(fields["System.Title"] || "");
+      const descriptionHtml = String(fields["System.Description"] || "");
+      const description = stripHtml(descriptionHtml);
+      const acHtml = String(fields["Microsoft.VSTS.Common.AcceptanceCriteria"] || "");
+      const acceptanceCriteria = stripHtml(acHtml).split(/\n+/).filter(Boolean);
+      const confidenceOverall = Number(fields["Custom.EnrichmentConfidenceOverall"]) || 50;
+      const missingRaw = String(fields["Custom.EnrichmentMissingPiecesIssues"] || "");
+      const missingIssues = missingRaw.split(";").map((s: string) => s.trim()).filter(Boolean);
+
+      const suggestion = generateRefinementSuggestion(
+        input.workItemId,
+        title,
+        description,
+        acceptanceCriteria,
+        confidenceOverall,
+        missingIssues
+      );
+
+      return JSON.stringify({ result: "success", ...suggestion });
+    }
+
+    case "extract_rraid": {
+      if (!input.fileName) throw new Error("fileName is required");
+      const fileStore = getFileStore();
+      const storedFile = fileStore.get(input.fileName);
+      if (!storedFile) throw new Error(`File '${input.fileName}' not found. Upload it first.`);
+      const content = storedFile.content || "";
+      if (!content) throw new Error(`File '${input.fileName}' has no content.`);
+
+      const items = extractRRAID(content, input.fileName);
+
+      // Match to existing stories
+      try {
+        const client = requireAzureClient(clients);
+        const stories = await client.listWorkItems({ project: input.project, witType: "User Story", top: 200 });
+        const storyTitles = stories.map((s) => String(s.fields?.["System.Title"] || "")).filter(Boolean);
+        matchRRAIDToStories(items, storyTitles);
+      } catch { /* matching is optional */ }
+
+      logger.info("RRAID extraction complete", { fileName: input.fileName, itemCount: items.length });
+      return JSON.stringify({ result: "success", itemCount: items.length, items });
+    }
+
+    case "create_rraid_items": {
+      const client = requireAzureClient(clients);
+      const rraItems = input.items || [];
+      if (rraItems.length === 0) throw new Error("No items provided.");
+
+      let created = 0;
+      for (const item of rraItems) {
+        const tags = `RRAID:${item.category};${item.severity}`;
+        await client.createWorkItem({
+          project: input.project,
+          witType: "Issue",
+          title: item.title,
+          description: `<strong>[${item.category}]</strong> ${item.description}<br/><br/><em>Severity: ${item.severity}</em>`,
+          tags,
+        });
+        created++;
+      }
+
+      logger.info("RRAID items created", { project: input.project, created });
+      return JSON.stringify({ result: "success", created });
+    }
+
+    case "list_rraid_items": {
+      const client = requireAzureClient(clients);
+      const issues = await client.listWorkItems({
+        project: input.project,
+        witType: "Issue",
+        top: 200,
+      });
+
+      // Filter to RRAID-tagged items
+      let rraItems = issues.filter((iss) => {
+        const tags = String(iss.fields?.["System.Tags"] || "");
+        return tags.includes("RRAID:");
+      });
+
+      // Optional category filter
+      if (input.category) {
+        rraItems = rraItems.filter((iss) => {
+          const tags = String(iss.fields?.["System.Tags"] || "");
+          return tags.includes(`RRAID:${input.category}`);
+        });
+      }
+
+      const mapped = rraItems.map((iss) => {
+        const tags = String(iss.fields?.["System.Tags"] || "");
+        const categoryMatch = tags.match(/RRAID:(Risk|Requirement|Assumption|Issue|Dependency)/);
+        const severityMatch = tags.match(/\b(High|Medium|Low)\b/);
+        return {
+          id: iss.id,
+          title: String(iss.fields?.["System.Title"] || ""),
+          category: categoryMatch?.[1] || "Unknown",
+          severity: severityMatch?.[1] || "Low",
+          state: String(iss.fields?.["System.State"] || ""),
+        };
+      });
+
+      return JSON.stringify({ result: "success", count: mapped.length, items: mapped });
+    }
 
       default:
         throw new Error(`Unknown tool: ${toolName}`);

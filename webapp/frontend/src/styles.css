@@ -439,12 +439,62 @@ button:disabled {
 
 .modal-card {
   width: min(540px, 100%);
-  border-radius: 14px;
+  border-radius: 16px;
   background: #fff;
   border: 1px solid #c9d8ea;
-  padding: 18px;
+  padding: 28px 28px 24px;
   display: grid;
-  gap: 12px;
+  gap: 16px;
+  box-shadow: 0 16px 48px rgba(0, 40, 80, 0.22);
+}
+
+.modal-card h3 {
+  margin: 0;
+  font-size: 1.3rem;
+  color: #0058ab;
+}
+
+.modal-card p {
+  margin: 0;
+  color: #555;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.modal-card label {
+  display: grid;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: #333;
+}
+
+.modal-card input {
+  border: 1px solid #9cb4ca;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fff;
+  font-size: 0.92rem;
+  transition: border-color 0.15s;
+}
+
+.modal-card input:focus {
+  outline: none;
+  border-color: #0058ab;
+  box-shadow: 0 0 0 3px rgba(0, 88, 171, 0.12);
+}
+
+.modal-card .setup-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.modal-card button {
+  padding: 10px 16px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  border-radius: 10px;
 }
 
 @media (max-width: 920px) {

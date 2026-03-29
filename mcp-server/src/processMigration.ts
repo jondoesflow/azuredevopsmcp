@@ -212,93 +212,47 @@ export async function checkEnrichmentProcessExists(
 }
 
 // ---------------------------------------------------------------------------
-// Check whether a specific project's process has Enrichment fields
+// Check whether a project uses the expected process template
 // ---------------------------------------------------------------------------
 
-export async function checkProjectEnrichmentFields(
+export async function checkProjectProcess(
   orgUrl: string,
   pat: string,
   projectName: string,
-): Promise<{ hasEnrichmentFields: boolean; processName: string; missingFields: string[] }> {
-  logger.info("Checking project for enrichment fields…", { projectName });
+  expectedProcessName: string,
+): Promise<{ hasCorrectProcess: boolean; processName: string; expectedProcessName: string }> {
+  logger.info("Checking project process template…", { projectName, expectedProcessName });
 
-  // 1. Get the project's process template
-  const projectProps = await adoFetch<{
-    value: Array<{ name: string; value: string }>;
-  }>(orgUrl, pat, `${projectName}/_apis/properties?keys=System.ProcessTemplateType`);
+  // List all processes with their projects to find which process this project uses
+  const processList = await adoFetch<{
+    value: Array<AdoProcess & { projects?: Array<{ name: string; id: string }> }>;
+  }>(orgUrl, pat, "_apis/work/processes?$expand=projects");
 
-  const processTypeId = projectProps.value?.find(
-    (p) => p.name === "System.ProcessTemplateType",
-  )?.value;
+  let actualProcessName = "Unknown";
 
-  if (!processTypeId) {
-    throw new Error(`Could not determine process template for project "${projectName}".`);
+  for (const proc of processList.value) {
+    const match = proc.projects?.some(
+      (p) => p.name.toLowerCase() === projectName.toLowerCase(),
+    );
+    if (match) {
+      actualProcessName = proc.name;
+      break;
+    }
   }
 
-  // 2. Get the process name
-  const proc = await adoFetch<AdoProcess>(orgUrl, pat, `_apis/work/processes/${processTypeId}`);
+  const hasCorrectProcess = actualProcessName.toLowerCase() === expectedProcessName.toLowerCase();
 
-  // 3. Get fields on the User Story WIT
-  let fields: { value: AdoField[] };
-  try {
-    fields = await adoFetch<{ value: AdoField[] }>(
-      orgUrl,
-      pat,
-      `_apis/work/processes/${processTypeId}/workitemtypes/Microsoft.VSTS.WorkItemTypes.UserStory/fields`,
-    );
-  } catch {
-    // Try the generic "User Story" ref name for custom processes
-    fields = await adoFetch<{ value: AdoField[] }>(
-      orgUrl,
-      pat,
-      `_apis/work/processes/${processTypeId}/workitemtypes/Microsoft.VSTS.WorkItemTypes.UserStory/fields`,
-    );
-  }
-
-  const existingEnrichment = new Set(
-    fields.value
-      .filter((f) => f.referenceName.includes("Enrichment"))
-      .map((f) => f.referenceName),
-  );
-
-  // Expected enrichment fields
-  const expectedFields = [
-    "Custom.EnrichmentConfidenceOverall",
-    "Custom.EnrichmentConfidenceTitle",
-    "Custom.EnrichmentConfidenceDescription",
-    "Custom.EnrichmentConfidenceAcceptanceCriteria",
-    "Custom.EnrichmentConfidenceRationale",
-    "Custom.EnrichmentDefinitionofDone",
-    "Custom.EnrichmentDependenciesDependsOn",
-    "Custom.EnrichmentDependenciesBlocks",
-    "Custom.EnrichmentDependenciesConfidence",
-    "Custom.EnrichmentDependenciesRationale",
-    "Custom.EnrichmentMissingPiecesIssues",
-    "Custom.EnrichmentConsistencyIssues",
-    "Custom.EnrichmentEffortTShirtSize",
-    "Custom.EnrichmentEffortConfidence",
-    "Custom.EnrichmentEffortReasoning",
-    "Custom.EnrichmentQualityScore",
-    "Custom.EnrichmentQualityClarity",
-    "Custom.EnrichmentQualityCompleteness",
-    "Custom.EnrichmentQualityTestability",
-    "Custom.EnrichmentQualityConsistency",
-    "Custom.EnrichmentQualityIssues",
-    "Custom.EnrichmentQualityRecommendations",
-  ];
-
-  const missingFields = expectedFields.filter((f) => !existingEnrichment.has(f));
-
-  logger.info("Enrichment field check complete", {
-    processName: proc.name,
-    found: existingEnrichment.size,
-    missing: missingFields.length,
+  logger.info("Process check complete", {
+    projectName,
+    actualProcess: actualProcessName,
+    expectedProcessName,
+    match: hasCorrectProcess,
   });
 
   return {
-    hasEnrichmentFields: missingFields.length === 0,
-    processName: proc.name,
-    missingFields,
+    hasCorrectProcess,
+    processName: actualProcessName,
+    expectedProcessName,
   };
 }
 
@@ -661,40 +615,72 @@ export async function migrateProcess(migrationConfig: ProcessMigrationConfig): P
 }
 
 // ---------------------------------------------------------------------------
-// Assign the migrated process to a target project
+// Create a new project using the migrated process
 // ---------------------------------------------------------------------------
 
-export async function assignProcessToProject(
+export async function createProjectWithProcess(
   orgUrl: string,
   pat: string,
   projectName: string,
   processId: string,
-): Promise<void> {
-  logger.info("Assigning migrated process to project…", { projectName, processId });
+  description?: string,
+): Promise<{ projectName: string; projectId: string }> {
+  logger.info("Creating new project with enrichment process…", { projectName, processId });
 
-  // Get the project ID first
-  const project = await adoFetch<{ id: string; name: string }>(
+  const createResult = await adoFetch<{ id: string; status: string; url: string }>(
     orgUrl,
     pat,
-    `_apis/projects/${encodeURIComponent(projectName)}`,
-  );
-
-  // Update the project's process template
-  await adoFetch(
-    orgUrl,
-    pat,
-    `_apis/projects/${project.id}`,
-    "PATCH",
+    "_apis/projects",
+    "POST",
     {
+      name: projectName,
+      description: description ?? "Created by MCP Backlog Assistant with Enrichment process",
       capabilities: {
-        processTemplate: {
-          templateTypeId: processId,
-        },
+        versioncontrol: { sourceControlType: "Git" },
+        processTemplate: { templateTypeId: processId },
       },
     },
   );
 
-  logger.info("Process assigned to project successfully", { projectName, processId });
+  // Project creation is async — poll the operation status
+  const operationId = createResult.id;
+  if (!operationId) {
+    throw new Error("Project creation did not return an operation ID.");
+  }
+
+  logger.info("Project creation started, polling operation…", { operationId });
+
+  const maxAttempts = 30;
+  const pollIntervalMs = 2000;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+
+    const status = await adoFetch<{ id: string; status: string }>(
+      orgUrl,
+      pat,
+      `_apis/operations/${operationId}`,
+    );
+
+    logger.debug(`  Poll ${attempt}/${maxAttempts}: status=${status.status}`);
+
+    if (status.status === "succeeded") {
+      // Get the project ID
+      const project = await adoFetch<{ id: string; name: string }>(
+        orgUrl,
+        pat,
+        `_apis/projects/${encodeURIComponent(projectName)}`,
+      );
+      logger.info("Project created successfully", { projectName, projectId: project.id });
+      return { projectName, projectId: project.id };
+    }
+
+    if (status.status === "failed" || status.status === "cancelled") {
+      throw new Error(`Project creation ${status.status}. Check Azure DevOps for details.`);
+    }
+  }
+
+  throw new Error(`Project creation timed out after ${maxAttempts * pollIntervalMs / 1000}s. The project may still be provisioning — check Azure DevOps.`);
 }
 
 // ---------------------------------------------------------------------------

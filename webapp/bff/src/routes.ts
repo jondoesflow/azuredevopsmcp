@@ -8,7 +8,7 @@ import { SetupStore } from "./setupStore.js";
 
 const validateRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  limit: 10,
+  limit: 50,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "Too many validation attempts. Please try again later." },
@@ -56,10 +56,17 @@ function randomFallbackFact(): string {
   return fallbackFacts[Math.floor(Math.random() * fallbackFacts.length)] ?? fallbackFacts[0];
 }
 
+const PROCESS_TYPE_MAP: Record<string, string> = {
+  "agile-enrichment": "Agile with Enrichment",
+  "finance-operations": "Finance and Operations",
+};
+
 function parseSetupBody(req: Request): SetupConnectionInput {
   const body = req.body as Partial<SetupConnectionInput>;
+  const processType = body?.processType === "agile-enrichment" || body?.processType === "finance-operations" ? body.processType : undefined;
 
   return {
+    processType,
     azureDevOpsOrg: normalizeOptionalString(body?.azureDevOpsOrg),
     azureDevOpsUrl: normalizeOptionalString(body?.azureDevOpsUrl),
     azureDevOpsProject: normalizeOptionalString(body?.azureDevOpsProject),
@@ -223,7 +230,7 @@ export function createApiRouter(config: AppConfig) {
     }
   });
 
-  router.post("/setup/check-enrichment", validateRateLimit, async (req: Request, res: Response) => {
+  router.post("/setup/check-process", validateRateLimit, async (req: Request, res: Response) => {
     try {
       const mcpClient = createMcpClient(req);
       const userId = getUserId(req);
@@ -233,24 +240,35 @@ export function createApiRouter(config: AppConfig) {
         res.status(400).json({ error: "No project configured. Validate your connection first." });
         return;
       }
-      const result = await mcpClient.executeTool("check_enrichment_fields", { project });
+      const processType = state.processType;
+      if (!processType) {
+        res.status(400).json({ error: "No process type selected. Choose a process type first." });
+        return;
+      }
+      const expectedProcessName = PROCESS_TYPE_MAP[processType];
+      if (!expectedProcessName) {
+        res.status(400).json({ error: `Unknown process type: ${processType}` });
+        return;
+      }
+      const result = await mcpClient.executeTool("check_project_process", { project, expectedProcessName });
       res.json(result);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to check enrichment fields";
+      const message = error instanceof Error ? error.message : "Failed to check project process";
       res.status(502).json({ error: message });
     }
   });
 
   router.post("/setup/migrate-enrichment", processRateLimit, async (req: Request, res: Response) => {
     try {
-      const { sourceOrgUrl, sourceProject, sourceProcessName, sourcePat } = req.body as {
+      const { sourceOrgUrl, sourceProject, sourceProcessName, sourcePat, newProjectName } = req.body as {
         sourceOrgUrl?: string;
         sourceProject?: string;
         sourceProcessName?: string;
         sourcePat?: string;
+        newProjectName?: string;
       };
-      if (!sourceOrgUrl || !sourceProject || !sourceProcessName || !sourcePat) {
-        res.status(400).json({ error: "sourceOrgUrl, sourceProject, sourceProcessName, and sourcePat are required." });
+      if (!sourceOrgUrl || !sourceProject || !sourceProcessName || !sourcePat || !newProjectName) {
+        res.status(400).json({ error: "sourceOrgUrl, sourceProject, sourceProcessName, sourcePat, and newProjectName are required." });
         return;
       }
       const mcpClient = createMcpClient(req);
@@ -267,8 +285,16 @@ export function createApiRouter(config: AppConfig) {
         sourceProject: sourceProject.trim(),
         sourceProcessName: sourceProcessName.trim(),
         sourcePat: sourcePat.trim(),
-      });
-      res.json(result);
+        newProjectName: newProjectName.trim(),
+      }) as { result?: string; newProjectName?: string; [key: string]: unknown };
+
+      // On success, switch the session to the new project
+      if (result.result === "success" && result.newProjectName) {
+        setupStore.save({ azureDevOpsProject: result.newProjectName as string }, userId);
+        setupStore.markValidated(userId);
+      }
+
+      res.json({ ...result, setupState: setupStore.getState(userId) });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Enrichment process migration failed";
       res.status(502).json({ error: message });
@@ -498,6 +524,259 @@ export function createApiRouter(config: AppConfig) {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Request failed";
+      res.status(502).json({ error: message });
+    }
+  });
+
+  // ── Backlog Health Dashboard ──────────────────────────────────────
+  router.get("/dashboard/health", async (req, res) => {
+    try {
+      const userId = (req as any).userId as string;
+      const state = setupStore.getState(userId);
+      if (!state?.azureDevOpsProject) {
+        res.status(400).json({ error: "No project configured" });
+        return;
+      }
+      const mcpClient = createMcpClient(req);
+      const raw = await mcpClient.executeTool("get_backlog_health", {
+        project: state.azureDevOpsProject,
+        top: 500,
+      });
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      res.json(parsed);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to fetch health data";
+      res.status(502).json({ error: message });
+    }
+  });
+
+  // ── Export: Excel ─────────────────────────────────────────────────
+  router.get("/export/excel", async (req, res) => {
+    try {
+      const userId = (req as any).userId as string;
+      const state = setupStore.getState(userId);
+      if (!state?.azureDevOpsProject) {
+        res.status(400).json({ error: "No project configured" });
+        return;
+      }
+      const mcpClient = createMcpClient(req);
+      const raw = await mcpClient.executeTool("get_backlog_health", {
+        project: state.azureDevOpsProject,
+        top: 500,
+      });
+      const health = typeof raw === "string" ? JSON.parse(raw) : raw;
+
+      // Build CSV-style content as a simple export (exceljs not yet installed)
+      const storiesRaw = await mcpClient.executeTool("list_user_stories", {
+        project: state.azureDevOpsProject,
+        top: 500,
+      });
+      const stories = typeof storiesRaw === "string" ? JSON.parse(storiesRaw) : storiesRaw;
+      const items = Array.isArray(stories) ? stories : (stories.stories || []);
+
+      const headers = ["ID", "Title", "State", "Assigned To", "Confidence", "Quality Score", "Effort", "Missing Pieces", "Dependencies"];
+      const rows = items.map((s: any) => [
+        s.id || "",
+        String(s.fields?.["System.Title"] || s.title || "").replace(/,/g, ";"),
+        String(s.fields?.["System.State"] || s.state || ""),
+        String(s.fields?.["System.AssignedTo"]?.displayName || s.assignedTo || ""),
+        String(s.fields?.["Custom.EnrichmentConfidenceOverall"] || ""),
+        String(s.fields?.["Custom.EnrichmentQualityScore"] || ""),
+        String(s.fields?.["Custom.EnrichmentEffortTShirtSize"] || ""),
+        String(s.fields?.["Custom.EnrichmentMissingPiecesIssues"] || "").replace(/,/g, ";"),
+        String(s.fields?.["Custom.EnrichmentDependenciesDependsOn"] || "").replace(/,/g, ";"),
+      ].join(","));
+
+      const csv = [headers.join(","), ...rows].join("\n");
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename=backlog-export-${state.azureDevOpsProject}.csv`);
+      res.send(csv);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Export failed";
+      res.status(502).json({ error: message });
+    }
+  });
+
+  // ── Export: Summary ───────────────────────────────────────────────
+  router.get("/export/summary", async (req, res) => {
+    try {
+      const userId = (req as any).userId as string;
+      const state = setupStore.getState(userId);
+      if (!state?.azureDevOpsProject) {
+        res.status(400).json({ error: "No project configured" });
+        return;
+      }
+      const mcpClient = createMcpClient(req);
+      const raw = await mcpClient.executeTool("get_backlog_health", {
+        project: state.azureDevOpsProject,
+        top: 500,
+      });
+      const health = typeof raw === "string" ? JSON.parse(raw) : raw;
+
+      const epicsRaw = await mcpClient.executeTool("list_epics", { project: state.azureDevOpsProject });
+      const epics = typeof epicsRaw === "string" ? JSON.parse(epicsRaw) : epicsRaw;
+      const featuresRaw = await mcpClient.executeTool("list_features", { project: state.azureDevOpsProject });
+      const features = typeof featuresRaw === "string" ? JSON.parse(featuresRaw) : featuresRaw;
+
+      res.json({
+        projectName: state.azureDevOpsProject,
+        exportDate: new Date().toISOString(),
+        epicCount: Array.isArray(epics) ? epics.length : (epics.epics?.length || 0),
+        featureCount: Array.isArray(features) ? features.length : (features.features?.length || 0),
+        storyCount: health.totalStories || 0,
+        overallHealth: health.ragDistribution || { red: 0, amber: 0, green: 0 },
+        averageConfidence: health.averageConfidence || 0,
+        averageQuality: health.averageQuality || 0,
+        topRisks: (health.missingPiecesHeatmap || []).slice(0, 5).map((m: any) => m.issue),
+        effortDistribution: health.effortBreakdown || {},
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Summary failed";
+      res.status(502).json({ error: message });
+    }
+  });
+
+  // ── Story Refinement ─────────────────────────────────────────────
+  router.post("/refine/suggest", async (req, res) => {
+    try {
+      const userId = (req as any).userId as string;
+      const state = setupStore.getState(userId);
+      if (!state?.azureDevOpsProject) {
+        res.status(400).json({ error: "No project configured" });
+        return;
+      }
+      const { workItemId } = req.body as { workItemId: number };
+      if (!workItemId) {
+        res.status(400).json({ error: "workItemId is required" });
+        return;
+      }
+      const mcpClient = createMcpClient(req);
+      const raw = await mcpClient.executeTool("refine_story", {
+        project: state.azureDevOpsProject,
+        workItemId,
+      });
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      res.json(parsed);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Refinement failed";
+      res.status(502).json({ error: message });
+    }
+  });
+
+  router.post("/refine/apply", async (req, res) => {
+    try {
+      const userId = (req as any).userId as string;
+      const state = setupStore.getState(userId);
+      if (!state?.azureDevOpsProject) {
+        res.status(400).json({ error: "No project configured" });
+        return;
+      }
+      const { workItemId, title, description, acceptanceCriteria } = req.body as {
+        workItemId: number;
+        title?: string;
+        description?: string;
+        acceptanceCriteria?: string[];
+      };
+      if (!workItemId) {
+        res.status(400).json({ error: "workItemId is required" });
+        return;
+      }
+      const mcpClient = createMcpClient(req);
+      const updatePayload: Record<string, unknown> = {
+        project: state.azureDevOpsProject,
+        workItemId,
+      };
+      if (title) updatePayload.title = title;
+      if (description) updatePayload.description = description;
+
+      const raw = await mcpClient.executeTool("update_work_item", updatePayload);
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+
+      if (acceptanceCriteria && acceptanceCriteria.length > 0) {
+        await mcpClient.executeTool("add_acceptance_criteria", {
+          project: state.azureDevOpsProject,
+          userStoryId: workItemId,
+          criteria: acceptanceCriteria,
+        });
+      }
+
+      res.json({ result: "success", ...parsed });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Apply failed";
+      res.status(502).json({ error: message });
+    }
+  });
+
+  // ── RRAID Tracking ────────────────────────────────────────────────
+  router.post("/rraid/extract", async (req, res) => {
+    try {
+      const userId = (req as any).userId as string;
+      const state = setupStore.getState(userId);
+      if (!state?.azureDevOpsProject) {
+        res.status(400).json({ error: "No project configured" });
+        return;
+      }
+      const { fileName } = req.body as { fileName: string };
+      if (!fileName) {
+        res.status(400).json({ error: "fileName is required" });
+        return;
+      }
+      const mcpClient = createMcpClient(req);
+      const raw = await mcpClient.executeTool("extract_rraid", {
+        fileName,
+        project: state.azureDevOpsProject,
+      });
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      res.json(parsed);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "RRAID extraction failed";
+      res.status(502).json({ error: message });
+    }
+  });
+
+  router.post("/rraid/create", async (req, res) => {
+    try {
+      const userId = (req as any).userId as string;
+      const state = setupStore.getState(userId);
+      if (!state?.azureDevOpsProject) {
+        res.status(400).json({ error: "No project configured" });
+        return;
+      }
+      const { items } = req.body as { items: any[] };
+      if (!items || items.length === 0) {
+        res.status(400).json({ error: "No items provided" });
+        return;
+      }
+      const mcpClient = createMcpClient(req);
+      const raw = await mcpClient.executeTool("create_rraid_items", {
+        project: state.azureDevOpsProject,
+        items,
+      });
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      res.json(parsed);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "RRAID creation failed";
+      res.status(502).json({ error: message });
+    }
+  });
+
+  router.get("/rraid/list", async (req, res) => {
+    try {
+      const userId = (req as any).userId as string;
+      const state = setupStore.getState(userId);
+      if (!state?.azureDevOpsProject) {
+        res.status(400).json({ error: "No project configured" });
+        return;
+      }
+      const category = req.query.category as string | undefined;
+      const mcpClient = createMcpClient(req);
+      const payload: Record<string, unknown> = { project: state.azureDevOpsProject };
+      if (category) payload.category = category;
+      const raw = await mcpClient.executeTool("list_rraid_items", payload);
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      res.json(parsed);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "RRAID list failed";
       res.status(502).json({ error: message });
     }
   });

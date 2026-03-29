@@ -27,7 +27,10 @@ export interface ChatRequestBody {
   fileName?: string;
 }
 
+export type ProcessType = "agile-enrichment" | "finance-operations";
+
 export interface SetupConnectionInput {
+  processType?: ProcessType;
   azureDevOpsOrg?: string;
   azureDevOpsUrl?: string;
   azureDevOpsProject?: string;
@@ -35,6 +38,7 @@ export interface SetupConnectionInput {
 }
 
 export interface SetupConnectionState {
+  processType?: ProcessType;
   azureDevOpsOrg?: string;
   azureDevOpsUrl?: string;
   azureDevOpsProject?: string;
