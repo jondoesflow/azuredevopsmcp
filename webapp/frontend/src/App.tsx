@@ -1096,9 +1096,11 @@ export function App() {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    if (!file.name.toLowerCase().endsWith(".txt")) {
-      setError("Only .txt files are supported for processing.");
-      logLine(`Rejected upload for '${file.name}' (only .txt allowed).`);
+    const ALLOWED_EXTENSIONS = [".txt", ".md", ".csv", ".json", ".xml", ".log"];
+    const ext = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
+    if (!ALLOWED_EXTENSIONS.includes(ext)) {
+      setError(`Unsupported file type '${ext}'. Accepted: ${ALLOWED_EXTENSIONS.join(", ")}`);
+      logLine(`Rejected upload for '${file.name}' (unsupported type).`);
       event.target.value = "";
       return;
     }
@@ -1363,20 +1365,35 @@ export function App() {
     <div className="page">
       {renderRefinementModal()}
       <header className="hero">
-        <img src="/capgemini-logo-white.svg" alt="Capgemini" style={{ height: 54, marginBottom: 8, display: "block" }} />
-        <h1>Backlog Assistant</h1>
-        <p>Secure web interface for Azure DevOps backlog creation.</p>
-        <div className="auth-row">
-          <span>Signed in as {account?.username}</span>
+        {/* Top bar: logo left, user identity right */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", marginBottom: 8 }}>
+          <img src="/capgemini-logo-white.svg" alt="Capgemini" style={{ height: 48 }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 13, opacity: 0.85 }}>{account?.username}</span>
+            <button onClick={signOut} className="header-btn header-btn-subtle">Sign out</button>
+            {renderInlineSpinner("sign-out", "Signing out...")}
+            <button
+              onClick={() => { setShowUserGuide((c) => !c); setShowEnrichmentFieldsPage(false); setShowHealthDashboard(false); setShowRRAIDLog(false); }}
+              title="User Guide"
+              className="header-help-btn"
+            >?</button>
+          </div>
+        </div>
+
+        <h1 style={{ margin: "4px 0" }}>Backlog Assistant</h1>
+        <p style={{ margin: "0 0 12px 0", opacity: 0.8 }}>Secure web interface for Azure DevOps backlog creation.</p>
+
+        {/* Navigation buttons — uniform spacing */}
+        <nav className="header-nav">
           {(showEnrichmentFieldsPage || showUserGuide || showHealthDashboard || showRRAIDLog) ? (
-            <button onClick={() => { setShowEnrichmentFieldsPage(false); setShowUserGuide(false); setShowHealthDashboard(false); setShowRRAIDLog(false); }}>Back to assistant</button>
+            <button className="header-btn" onClick={() => { setShowEnrichmentFieldsPage(false); setShowUserGuide(false); setShowHealthDashboard(false); setShowRRAIDLog(false); }}>Back to assistant</button>
           ) : (
             <>
-              <button onClick={() => { setShowHealthDashboard(true); void loadHealthData(); }}>Health Dashboard</button>
-              <button onClick={() => { setShowRRAIDLog(true); }}>RRAID Log</button>
-              <button onClick={() => setShowEnrichmentFieldsPage(true)}>Enrichment fields</button>
-              <button onClick={() => setShowConfigModal(true)}>Configuration</button>
-              <button onClick={() => {
+              <button className="header-btn" onClick={() => { setShowHealthDashboard(true); void loadHealthData(); }}>Health Dashboard</button>
+              <button className="header-btn" onClick={() => { setShowRRAIDLog(true); }}>RRAID Log</button>
+              <button className="header-btn" onClick={() => setShowEnrichmentFieldsPage(true)}>Enrichment fields</button>
+              <button className="header-btn" onClick={() => setShowConfigModal(true)}>Configuration</button>
+              <button className="header-btn header-btn-subtle" onClick={() => {
                 setSelectedProcessType(null);
                 setProcessCheck(null);
                 setSetupState((prev) => prev ? { ...prev, isValidated: false } : prev);
@@ -1384,32 +1401,7 @@ export function App() {
               }}>Reset connection</button>
             </>
           )}
-          <button onClick={signOut}>Sign out</button>
-          {renderInlineSpinner("sign-out", "Signing out...")}
-          <button
-            onClick={() => { setShowUserGuide((c) => !c); setShowEnrichmentFieldsPage(false); }}
-            title="User Guide"
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: "50%",
-              border: "2px solid rgba(255,255,255,0.7)",
-              background: "transparent",
-              color: "#fff",
-              fontSize: 16,
-              fontWeight: 700,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: 0,
-              marginLeft: 4,
-              flexShrink: 0,
-            }}
-          >
-            ?
-          </button>
-        </div>
+        </nav>
       </header>
 
       {showHealthDashboard ? renderHealthDashboard() : showRRAIDLog ? renderRRAIDLog() : showUserGuide ? renderUserGuide() : showEnrichmentFieldsPage ? renderEnrichmentFieldsPage() : !connectionReady ? (
@@ -1519,8 +1511,8 @@ export function App() {
                 <p>Project: <strong>{configuredProject || "(from validated setup)"}</strong></p>
 
                 <label className="upload">
-                  Upload transcript / to-be process file (.txt)
-                  <input type="file" accept=".txt,text/plain" onChange={onUpload} disabled={busy} />
+                  Upload document (.txt, .md, .csv, .json, .xml, .log)
+                  <input type="file" accept=".txt,.md,.csv,.json,.xml,.log,text/plain,text/markdown,text/csv,application/json" onChange={onUpload} disabled={busy} />
                 </label>
                 {renderInlineSpinner("upload", "Uploading file...")}
 
