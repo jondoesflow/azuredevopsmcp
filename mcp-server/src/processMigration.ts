@@ -223,34 +223,35 @@ export async function checkProjectProcess(
 ): Promise<{ hasCorrectProcess: boolean; processName: string; expectedProcessName: string }> {
   logger.info("Checking project process template…", { projectName, expectedProcessName });
 
-  // 1. Get the project's process template ID
-  const projectProps = await adoFetch<{
-    value: Array<{ name: string; value: string }>;
-  }>(orgUrl, pat, `${projectName}/_apis/properties?keys=System.ProcessTemplateType`);
+  // List all processes with their projects to find which process this project uses
+  const processList = await adoFetch<{
+    value: Array<AdoProcess & { projects?: Array<{ name: string; id: string }> }>;
+  }>(orgUrl, pat, "_apis/work/processes?$expand=projects");
 
-  const processTypeId = projectProps.value?.find(
-    (p) => p.name === "System.ProcessTemplateType",
-  )?.value;
+  let actualProcessName = "Unknown";
 
-  if (!processTypeId) {
-    throw new Error(`Could not determine process template for project "${projectName}".`);
+  for (const proc of processList.value) {
+    const match = proc.projects?.some(
+      (p) => p.name.toLowerCase() === projectName.toLowerCase(),
+    );
+    if (match) {
+      actualProcessName = proc.name;
+      break;
+    }
   }
 
-  // 2. Get the process name
-  const proc = await adoFetch<AdoProcess>(orgUrl, pat, `_apis/work/processes/${processTypeId}`);
-
-  const hasCorrectProcess = proc.name.toLowerCase() === expectedProcessName.toLowerCase();
+  const hasCorrectProcess = actualProcessName.toLowerCase() === expectedProcessName.toLowerCase();
 
   logger.info("Process check complete", {
     projectName,
-    actualProcess: proc.name,
+    actualProcess: actualProcessName,
     expectedProcessName,
     match: hasCorrectProcess,
   });
 
   return {
     hasCorrectProcess,
-    processName: proc.name,
+    processName: actualProcessName,
     expectedProcessName,
   };
 }
