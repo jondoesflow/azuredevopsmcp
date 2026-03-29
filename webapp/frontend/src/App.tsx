@@ -7,7 +7,6 @@ import {
   getFiles,
   getRandomFact,
   getSetupConfig,
-  migrateEnrichment,
   processDocument,
   saveSetupConfig,
   uploadFile,
@@ -193,13 +192,6 @@ export function App() {
   const [showUserGuide, setShowUserGuide] = useState(false);
   const [enrichmentCheck, setEnrichmentCheck] = useState<EnrichmentCheckResult | null>(null);
   const [enrichmentChecking, setEnrichmentChecking] = useState(false);
-  const [showMigrationForm, setShowMigrationForm] = useState(false);
-  const [migrating, setMigrating] = useState(false);
-  const [sourceOrgUrl, setSourceOrgUrl] = useState("");
-  const [sourceProject, setSourceProject] = useState("");
-  const [sourceProcessName, setSourceProcessName] = useState("");
-  const [sourcePat, setSourcePat] = useState("");
-  const [newProjectName, setNewProjectName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [terminalLines, setTerminalLines] = useState<string[]>([
@@ -283,7 +275,7 @@ export function App() {
           <p>After validation the app automatically checks if your project has the 22 enrichment custom fields (confidence scores, dependencies, quality metrics, etc.).</p>
           <ul>
             <li><strong>Fields present</strong> — you will see &ldquo;Enrichment fields verified&rdquo; and can proceed.</li>
-            <li><strong>Fields missing</strong> — a migration form appears. Provide the <strong>Source Org URL</strong>, <strong>Source Project</strong>, <strong>Source Process Name</strong> (e.g. &ldquo;Power Platform Agile&rdquo;, &ldquo;F&amp;O Agile&rdquo;), <strong>Source PAT</strong>, and a <strong>New Project Name</strong>. Click <strong>Migrate &amp; Create Project</strong> to import the process and create a new project using it.</li>
+            <li><strong>Fields missing</strong> — the app shows which fields are missing and provides step-by-step instructions to change your project&apos;s process in Azure DevOps Organization Settings. After changing the process, return here and click <strong>Validate connection</strong> again.</li>
           </ul>
 
           <h3>Step 2: Upload a document</h3>
@@ -452,7 +444,7 @@ export function App() {
               logLine(`Enrichment fields confirmed in process "${enrichResult.processName}".`);
             } else {
               logLine(`Missing ${enrichResult.missingFieldCount} enrichment fields. Migration required.`);
-              setShowMigrationForm(true);
+    
             }
           } catch {
             logLine("Could not check enrichment fields.");
@@ -634,7 +626,7 @@ export function App() {
           logLine(`Enrichment fields found in process "${enrichResult.processName}".`);
         } else {
           logLine(`Missing ${enrichResult.missingFieldCount} enrichment fields. Migration required.`);
-          setShowMigrationForm(true);
+
         }
       } catch (err) {
         logLine("Could not check enrichment fields: " + (err instanceof Error ? err.message : "unknown error"));
@@ -648,43 +640,6 @@ export function App() {
     } finally {
       setValidatingConnection(false);
       setActionLoading((current) => (current === "validate-connection" ? null : current));
-    }
-  }
-
-  async function handleMigrateEnrichment(): Promise<void> {
-    setError(null);
-    setMigrating(true);
-    logLine("Starting enrichment process migration...");
-    try {
-      const token = await getAccessToken();
-      const result = await migrateEnrichment(token, {
-        sourceOrgUrl: sourceOrgUrl.trim(),
-        sourceProject: sourceProject.trim(),
-        sourceProcessName: sourceProcessName.trim(),
-        sourcePat: sourcePat.trim(),
-        newProjectName: newProjectName.trim(),
-      });
-      logLine("Migration complete: " + result.message);
-      setShowMigrationForm(false);
-
-      // Refresh setup state — BFF switched the active project to the new one
-      if (result.setupState) {
-        hydrateSetup(result.setupState);
-      } else {
-        const refreshedState = await getSetupConfig(token);
-        hydrateSetup(refreshedState);
-      }
-      setEnrichmentCheck({ ...enrichmentCheck!, hasEnrichmentFields: true, missingFieldCount: 0, missingFields: [] });
-      setStatus(`Project "${result.newProjectName}" created with process "${result.processName}".`);
-      if (result.boardUrl) {
-        logLine(`Board: ${result.boardUrl}`);
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Migration failed";
-      logLine("Migration failed: " + msg);
-      setError(msg);
-    } finally {
-      setMigrating(false);
     }
   }
 
@@ -897,45 +852,48 @@ export function App() {
                 {validatingConnection ? "Validating connection..." : "Validate connection"}
               </button>
             </div>
-            <div className="inline-action-row">
-              {renderInlineSpinner("save-connection", "Saving connection details...")}
-              {renderInlineSpinner("validate-connection", "Validating connection...")}
-            </div>
+            {actionLoading === "save-connection" && (
+              <div style={{ margin: "12px 0", padding: 14, borderRadius: 10, background: "#e3f2fd", display: "flex", alignItems: "center", gap: 12 }}>
+                <span className="spinner-dot" aria-hidden="true" style={{ width: 14, height: 14, flexShrink: 0 }} />
+                <span style={{ fontWeight: 600, fontSize: "1rem" }}>Saving connection details...</span>
+              </div>
+            )}
+            {actionLoading === "validate-connection" && (
+              <div style={{ margin: "12px 0", padding: 14, borderRadius: 10, background: "#e3f2fd", display: "flex", alignItems: "center", gap: 12 }}>
+                <span className="spinner-dot" aria-hidden="true" style={{ width: 14, height: 14, flexShrink: 0 }} />
+                <span style={{ fontWeight: 600, fontSize: "1rem" }}>Validating connection to Azure DevOps...</span>
+              </div>
+            )}
 
             {/* Enrichment check — blocks progress until fields are confirmed */}
             {setupState?.isValidated && (
-              <div style={{ margin: "16px 0", padding: 16, borderRadius: 10, background: enrichmentCheck?.hasEnrichmentFields ? "#e6f4ea" : showMigrationForm ? "#fff3e0" : "#f5f5f5" }}>
+              <div style={{ margin: "16px 0", padding: 16, borderRadius: 10, background: enrichmentCheck?.hasEnrichmentFields ? "#e6f4ea" : enrichmentChecking ? "#e3f2fd" : "#fff3e0" }}>
                 {enrichmentChecking ? (
-                  <p style={{ margin: 0 }}>Checking project for enrichment custom fields...</p>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span className="spinner-dot" aria-hidden="true" style={{ width: 14, height: 14, flexShrink: 0 }} />
+                    <span style={{ fontWeight: 600, fontSize: "1rem" }}>Validating enrichment fields on your project...</span>
+                  </div>
                 ) : enrichmentCheck?.hasEnrichmentFields ? (
-                  <p style={{ margin: 0, color: "#2e7d32", fontWeight: 600 }}>Enrichment fields verified in process &ldquo;{enrichmentCheck.processName}&rdquo;.</p>
-                ) : showMigrationForm && enrichmentCheck ? (
+                  <p style={{ margin: 0, color: "#2e7d32", fontWeight: 600, fontSize: "1rem" }}>Enrichment fields verified in process &ldquo;{enrichmentCheck.processName}&rdquo;.</p>
+                ) : enrichmentCheck ? (
                   <div>
-                    <h3 style={{ margin: "0 0 8px" }}>Process Migration &amp; New Project Required</h3>
+                    <h3 style={{ margin: "0 0 8px", color: "#e65100" }}>Enrichment Fields Missing</h3>
                     <p style={{ margin: "0 0 12px" }}>
-                      Your project&apos;s process template (&ldquo;{enrichmentCheck.processName}&rdquo;) is missing {enrichmentCheck.missingFieldCount} enrichment custom fields.
-                      Provide the source org with the desired process template and a name for a <strong>new project</strong> to create with it.
+                      Your project&apos;s process template (&ldquo;{enrichmentCheck.processName}&rdquo;) is missing <strong>{enrichmentCheck.missingFieldCount}</strong> enrichment custom fields.
                     </p>
-                    <label>Source Org URL
-                      <input type="text" value={sourceOrgUrl} onChange={(e) => setSourceOrgUrl(e.target.value)} placeholder="https://dev.azure.com/source-org" disabled={migrating} />
-                    </label>
-                    <label>Source Project
-                      <input type="text" value={sourceProject} onChange={(e) => setSourceProject(e.target.value)} placeholder="Project using Enrichment process" disabled={migrating} />
-                    </label>
-                    <label>Source Process Name
-                      <input type="text" value={sourceProcessName} onChange={(e) => setSourceProcessName(e.target.value)} placeholder="e.g. Enrichment" disabled={migrating} />
-                    </label>
-                    <label>Source PAT
-                      <input type="password" value={sourcePat} onChange={(e) => setSourcePat(e.target.value)} placeholder="PAT for source org" disabled={migrating} />
-                    </label>
-                    <label>New Project Name
-                      <input type="text" value={newProjectName} onChange={(e) => setNewProjectName(e.target.value)} placeholder="e.g. MyProject-PowerPlatform" disabled={migrating} />
-                    </label>
-                    <div className="setup-actions" style={{ marginTop: 10 }}>
-                      <button disabled={migrating || !sourceOrgUrl.trim() || !sourceProject.trim() || !sourceProcessName.trim() || !sourcePat.trim() || !newProjectName.trim()} onClick={() => void handleMigrateEnrichment()}>
-                        {migrating ? "Creating project..." : "Migrate & Create Project"}
-                      </button>
-                    </div>
+                    <p style={{ margin: "0 0 12px" }}>
+                      To fix this, change your project&apos;s process in Azure DevOps to one that includes the enrichment fields:
+                    </p>
+                    <ol style={{ margin: "0 0 12px", paddingLeft: 20 }}>
+                      <li>Go to <strong>Organization Settings</strong> &gt; <strong>Process</strong></li>
+                      <li>Find your current process (&ldquo;{enrichmentCheck.processName}&rdquo;) and open it</li>
+                      <li>Select the <strong>Projects</strong> tab</li>
+                      <li>Click the <strong>&hellip;</strong> menu next to your project and select <strong>Change process</strong></li>
+                      <li>Choose a process that includes enrichment fields (e.g. &ldquo;Agile with MoSCoW&rdquo;, &ldquo;Power Platform Agile&rdquo;)</li>
+                    </ol>
+                    <p style={{ margin: 0 }}>
+                      After changing the process, return here and click <strong>Validate connection</strong> again.
+                    </p>
                   </div>
                 ) : null}
               </div>
@@ -1064,7 +1022,6 @@ export function App() {
         </div>
       ) : null}
 
-      {/* Migration modal removed — migration form is now inline in wizard Step 1 */}
 
       {showConfigModal ? (
         <div className="modal-backdrop">
