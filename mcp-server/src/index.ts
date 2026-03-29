@@ -355,7 +355,7 @@ async function startHttpServer() {
   });
 
   // File upload endpoint (REST, not MCP) - accepts JSON body with fileName and fileContent
-  app.post("/upload", apiKeyAuth, uploadRateLimit, express.json({ limit: "50mb" }), (req: Request, res: Response) => {
+  app.post("/upload", apiKeyAuth, uploadRateLimit, express.json({ limit: "50mb" }), async (req: Request, res: Response) => {
     try {
       const { fileName, fileContent, contentType } = req.body;
 
@@ -373,22 +373,87 @@ async function startHttpServer() {
       logger.info("Upload received", { fileName: safeFileName, contentLength: fileContent.length });
 
       const extracted = extractNestedContent(fileContent, safeFileName);
-      const { content, error } = decodeUploadContent(extracted, safeFileName);
 
-      if (error) {
-        res.status(400).json({ error });
-        return;
+      // Check if this is a binary document that needs text extraction
+      const ext = safeFileName.toLowerCase().slice(safeFileName.lastIndexOf("."));
+      let content: string;
+
+      if ([".pdf", ".docx", ".doc", ".xlsx"].includes(ext)) {
+        // Binary file — extract text from base64
+        const base64Data = extracted.replace(/^data:[^;]+;base64,/, "").replace(/\s+/g, "");
+        const buffer = Buffer.from(base64Data, "base64");
+
+        if (ext === ".pdf") {
+          try {
+            const pdfParse = (await import("pdf-parse")).default;
+            const result = await pdfParse(buffer);
+            content = result.text;
+            logger.info("PDF text extracted at upload", { fileName: safeFileName, pages: result.numpages, textLength: content.length });
+          } catch (err) {
+            logger.error("PDF parse failed at upload", { fileName: safeFileName, error: String(err) });
+            res.status(400).json({ error: `Failed to extract text from PDF: ${String(err)}` });
+            return;
+          }
+        } else if (ext === ".docx" || ext === ".doc") {
+          try {
+            const mammoth = await import("mammoth");
+            const result = await mammoth.extractRawText({ buffer });
+            content = result.value;
+            logger.info("DOCX text extracted at upload", { fileName: safeFileName, textLength: content.length });
+          } catch (err) {
+            logger.error("DOCX parse failed at upload", { fileName: safeFileName, error: String(err) });
+            res.status(400).json({ error: `Failed to extract text from DOCX: ${String(err)}` });
+            return;
+          }
+        } else {
+          try {
+            const XLSX = await import("xlsx");
+            const workbook = XLSX.read(buffer, { type: "buffer" });
+            const sheets: string[] = [];
+            for (const sheetName of workbook.SheetNames) {
+              const sheet = workbook.Sheets[sheetName];
+              if (sheet) sheets.push(`--- ${sheetName} ---\n${XLSX.utils.sheet_to_csv(sheet)}`);
+            }
+            content = sheets.join("\n\n");
+            logger.info("XLSX text extracted at upload", { fileName: safeFileName, sheets: workbook.SheetNames.length, textLength: content.length });
+          } catch (err) {
+            logger.error("XLSX parse failed at upload", { fileName: safeFileName, error: String(err) });
+            res.status(400).json({ error: `Failed to extract text from XLSX: ${String(err)}` });
+            return;
+          }
+        }
+
+        // Clean extracted text
+        content = content
+          .replace(/\ufffd/g, "")
+          .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "")
+          .replace(/\r\n/g, "\n")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim();
+
+        if (!content || content.length < 10) {
+          res.status(400).json({ error: "No readable text could be extracted from the file. The file may be empty, image-only, or password-protected." });
+          return;
+        }
+      } else {
+        // Text file — decode normally
+        const decoded = decodeUploadContent(extracted, safeFileName);
+        if (decoded.error) {
+          res.status(400).json({ error: decoded.error });
+          return;
+        }
+        content = decoded.content;
       }
 
       const fileStore = getFileStore();
       fileStore.set(safeFileName, {
         name: safeFileName,
         content,
-        mimeType: contentType || "text/plain",
+        mimeType: ext === ".pdf" || ext === ".docx" || ext === ".doc" || ext === ".xlsx" ? "text/plain" : (contentType || "text/plain"),
         uploadedAt: new Date(),
       });
 
-      logger.info("File uploaded via REST", { fileName: safeFileName, size: content.length });
+      logger.info("File uploaded via REST", { fileName: safeFileName, size: content.length, originalExt: ext });
       res.json({ result: "success", fileName: safeFileName, size: content.length, contentType: contentType || "text/plain" });
     } catch (error) {
       logger.error("Error handling file upload", error);
