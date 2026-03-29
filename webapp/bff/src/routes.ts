@@ -83,8 +83,11 @@ function parseProcessBody(req: Request): { project?: string; analysisMode: "proc
   };
 }
 
-function isTextFile(fileName: string): boolean {
-  return fileName.toLowerCase().endsWith(".txt");
+const ALLOWED_EXTENSIONS = [".txt", ".md", ".csv", ".json", ".xml", ".log"];
+
+function isSupportedFile(fileName: string): boolean {
+  const ext = fileName.toLowerCase().slice(fileName.lastIndexOf("."));
+  return ALLOWED_EXTENSIONS.includes(ext);
 }
 
 /**
@@ -403,15 +406,15 @@ export function createApiRouter(config: AppConfig) {
 
       const mcpClient = createMcpClient(req);
       const files = await mcpClient.listFiles();
-      const textFiles = files.files.filter((file) => isTextFile(file.fileName));
+      const textFiles = files.files.filter((file) => isSupportedFile(file.fileName));
 
       if (textFiles.length === 0) {
-        res.status(400).json({ error: "No .txt file found. Upload one .txt file first." });
+        res.status(400).json({ error: "No supported file found. Upload a document (.txt, .md, .csv, .json, .xml, .log)." });
         return;
       }
 
       if (!processRequest.fileName && textFiles.length !== 1) {
-        res.status(400).json({ error: "Only one .txt file can be processed at a time. Delete extra files first." });
+        res.status(400).json({ error: "Only one document can be processed at a time. Delete extra files first." });
         return;
       }
 
@@ -420,7 +423,7 @@ export function createApiRouter(config: AppConfig) {
         : textFiles[0]?.fileName;
 
       if (!fileName) {
-        res.status(400).json({ error: "Selected file must be a .txt file already uploaded to the MCP server." });
+        res.status(400).json({ error: "Selected file must be a supported document already uploaded to the MCP server." });
         return;
       }
 
