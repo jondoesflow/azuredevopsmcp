@@ -1,6 +1,6 @@
 import { AzureDevOpsClient } from "../azureDevOpsClient.js";
 import { logger } from "../logger.js";
-import { checkProjectEnrichmentFields, checkEnrichmentProcessExists, migrateProcess, createProjectWithProcess } from "../processMigration.js";
+import { checkProjectProcess, checkEnrichmentProcessExists, migrateProcess, createProjectWithProcess } from "../processMigration.js";
 import { enrichGeneratedWorkItems } from "./enrichment/orchestrator.js";
 import {
   EnrichmentFlags,
@@ -974,9 +974,9 @@ export const workItemTools: Tool[] = [
     },
   },
   {
-    name: "check_enrichment_fields",
+    name: "check_project_process",
     description:
-      "Check whether the target Azure DevOps project's process template includes the Enrichment custom fields required for backlog enrichment.",
+      "Check whether the target Azure DevOps project uses the expected process template.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -984,8 +984,12 @@ export const workItemTools: Tool[] = [
           type: "string",
           description: "Azure DevOps project name.",
         },
+        expectedProcessName: {
+          type: "string",
+          description: "Expected process template name (e.g. 'Agile with Enrichment', 'Finance and Operations').",
+        },
       },
-      required: ["project"],
+      required: ["project", "expectedProcessName"],
     },
   },
   {
@@ -1054,6 +1058,7 @@ interface ToolInput {
   includePreview?: boolean;
   previewFileName?: string;
   reviewOnly?: boolean;
+  expectedProcessName?: string;
   sourceOrgUrl?: string;
   sourceProject?: string;
   sourceProcessName?: string;
@@ -2686,17 +2691,22 @@ export async function handleWorkItemTool(
         return JSON.stringify({ result: "success", id: updated.id });
       }
 
-      case "check_enrichment_fields": {
+      case "check_project_process": {
         const client = requireAzureClient(clients);
-        const orgUrl = client.getOrgUrl();
-        const pat = client.getPat();
-        const result = await checkProjectEnrichmentFields(orgUrl, pat, input.project);
+        if (!input.expectedProcessName) {
+          throw new Error("expectedProcessName is required.");
+        }
+        const result = await checkProjectProcess(
+          client.getOrgUrl(),
+          client.getPat(),
+          input.project,
+          input.expectedProcessName,
+        );
         return JSON.stringify({
           result: "success",
-          hasEnrichmentFields: result.hasEnrichmentFields,
+          hasCorrectProcess: result.hasCorrectProcess,
           processName: result.processName,
-          missingFieldCount: result.missingFields.length,
-          missingFields: result.missingFields,
+          expectedProcessName: result.expectedProcessName,
         });
       }
 

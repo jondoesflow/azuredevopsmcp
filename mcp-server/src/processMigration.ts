@@ -212,17 +212,18 @@ export async function checkEnrichmentProcessExists(
 }
 
 // ---------------------------------------------------------------------------
-// Check whether a specific project's process has Enrichment fields
+// Check whether a project uses the expected process template
 // ---------------------------------------------------------------------------
 
-export async function checkProjectEnrichmentFields(
+export async function checkProjectProcess(
   orgUrl: string,
   pat: string,
   projectName: string,
-): Promise<{ hasEnrichmentFields: boolean; processName: string; missingFields: string[] }> {
-  logger.info("Checking project for enrichment fields…", { projectName });
+  expectedProcessName: string,
+): Promise<{ hasCorrectProcess: boolean; processName: string; expectedProcessName: string }> {
+  logger.info("Checking project process template…", { projectName, expectedProcessName });
 
-  // 1. Get the project's process template
+  // 1. Get the project's process template ID
   const projectProps = await adoFetch<{
     value: Array<{ name: string; value: string }>;
   }>(orgUrl, pat, `${projectName}/_apis/properties?keys=System.ProcessTemplateType`);
@@ -238,67 +239,19 @@ export async function checkProjectEnrichmentFields(
   // 2. Get the process name
   const proc = await adoFetch<AdoProcess>(orgUrl, pat, `_apis/work/processes/${processTypeId}`);
 
-  // 3. Get fields on the User Story WIT
-  let fields: { value: AdoField[] };
-  try {
-    fields = await adoFetch<{ value: AdoField[] }>(
-      orgUrl,
-      pat,
-      `_apis/work/processes/${processTypeId}/workitemtypes/Microsoft.VSTS.WorkItemTypes.UserStory/fields`,
-    );
-  } catch {
-    // Try the generic "User Story" ref name for custom processes
-    fields = await adoFetch<{ value: AdoField[] }>(
-      orgUrl,
-      pat,
-      `_apis/work/processes/${processTypeId}/workitemtypes/Microsoft.VSTS.WorkItemTypes.UserStory/fields`,
-    );
-  }
+  const hasCorrectProcess = proc.name.toLowerCase() === expectedProcessName.toLowerCase();
 
-  const existingEnrichment = new Set(
-    fields.value
-      .filter((f) => f.referenceName.includes("Enrichment"))
-      .map((f) => f.referenceName),
-  );
-
-  // Expected enrichment fields
-  const expectedFields = [
-    "Custom.EnrichmentConfidenceOverall",
-    "Custom.EnrichmentConfidenceTitle",
-    "Custom.EnrichmentConfidenceDescription",
-    "Custom.EnrichmentConfidenceAcceptanceCriteria",
-    "Custom.EnrichmentConfidenceRationale",
-    "Custom.EnrichmentDefinitionofDone",
-    "Custom.EnrichmentDependenciesDependsOn",
-    "Custom.EnrichmentDependenciesBlocks",
-    "Custom.EnrichmentDependenciesConfidence",
-    "Custom.EnrichmentDependenciesRationale",
-    "Custom.EnrichmentMissingPiecesIssues",
-    "Custom.EnrichmentConsistencyIssues",
-    "Custom.EnrichmentEffortTShirtSize",
-    "Custom.EnrichmentEffortConfidence",
-    "Custom.EnrichmentEffortReasoning",
-    "Custom.EnrichmentQualityScore",
-    "Custom.EnrichmentQualityClarity",
-    "Custom.EnrichmentQualityCompleteness",
-    "Custom.EnrichmentQualityTestability",
-    "Custom.EnrichmentQualityConsistency",
-    "Custom.EnrichmentQualityIssues",
-    "Custom.EnrichmentQualityRecommendations",
-  ];
-
-  const missingFields = expectedFields.filter((f) => !existingEnrichment.has(f));
-
-  logger.info("Enrichment field check complete", {
-    processName: proc.name,
-    found: existingEnrichment.size,
-    missing: missingFields.length,
+  logger.info("Process check complete", {
+    projectName,
+    actualProcess: proc.name,
+    expectedProcessName,
+    match: hasCorrectProcess,
   });
 
   return {
-    hasEnrichmentFields: missingFields.length === 0,
+    hasCorrectProcess,
     processName: proc.name,
-    missingFields,
+    expectedProcessName,
   };
 }
 

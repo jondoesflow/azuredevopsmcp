@@ -103,7 +103,10 @@ export interface UploadResponse {
   contentType: string;
 }
 
+export type ProcessType = "agile-enrichment" | "finance-operations";
+
 export interface SetupConfigPayload {
+  processType?: ProcessType;
   azureDevOpsOrg?: string;
   azureDevOpsUrl?: string;
   azureDevOpsProject?: string;
@@ -111,11 +114,19 @@ export interface SetupConfigPayload {
 }
 
 export interface SetupConfigState {
+  processType?: ProcessType;
   azureDevOpsOrg?: string;
   azureDevOpsUrl?: string;
   azureDevOpsProject?: string;
   hasAzureDevOpsPat: boolean;
   isValidated: boolean;
+}
+
+export interface ProcessCheckResult {
+  result: string;
+  hasCorrectProcess: boolean;
+  processName: string;
+  expectedProcessName: string;
 }
 
 export interface ValidateSetupResponse {

@@ -2,7 +2,7 @@ import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { InteractionRequiredAuthError } from "@azure/msal-browser";
 import { useMsal } from "@azure/msal-react";
 import {
-  checkEnrichment,
+  checkProcess,
   deleteAllFiles,
   getFiles,
   getRandomFact,
@@ -12,7 +12,7 @@ import {
   uploadFile,
   validateSetupConfig,
 } from "./api";
-import { BacklogReviewResult, EnrichmentCheckResult, SetupConfigPayload, SetupConfigState, UploadedFile } from "./types";
+import { BacklogReviewResult, ProcessCheckResult, ProcessType, SetupConfigPayload, SetupConfigState, UploadedFile } from "./types";
 
 const bffScope = import.meta.env.VITE_BFF_SCOPE as string;
 type LoadingAction =
@@ -190,8 +190,9 @@ export function App() {
   const [review, setReview] = useState<BacklogReviewResult | null>(null);
   const [showEnrichmentFieldsPage, setShowEnrichmentFieldsPage] = useState(false);
   const [showUserGuide, setShowUserGuide] = useState(false);
-  const [enrichmentCheck, setEnrichmentCheck] = useState<EnrichmentCheckResult | null>(null);
-  const [enrichmentChecking, setEnrichmentChecking] = useState(false);
+  const [processCheck, setProcessCheck] = useState<ProcessCheckResult | null>(null);
+  const [processChecking, setProcessChecking] = useState(false);
+  const [selectedProcessType, setSelectedProcessType] = useState<ProcessType | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [terminalLines, setTerminalLines] = useState<string[]>([
@@ -214,9 +215,9 @@ export function App() {
       .sort((left, right) => (left.enrichment?.confidence?.overall ?? 100) - (right.enrichment?.confidence?.overall ?? 100));
   }, [review]);
 
-  // Connection is only ready when validated AND enrichment fields are confirmed
+  // Connection is only ready when validated AND process template is confirmed
   const connectionReady = Boolean(
-    setupState?.isValidated && enrichmentCheck?.hasEnrichmentFields
+    setupState?.isValidated && processCheck?.hasCorrectProcess
   );
 
   function logLine(message: string): void {
@@ -262,6 +263,9 @@ export function App() {
           <h3>Getting started</h3>
           <p>Sign in with your organisational account. After sign-in you will see the backlog assistant home screen.</p>
 
+          <h3>Choose a process type</h3>
+          <p>Before entering connection details, select the Azure DevOps process template your project should use (e.g. <strong>Agile with Enrichment</strong> or <strong>Finance &amp; Operations</strong>). Step 1 only appears after a process type is selected.</p>
+
           <h3>Step 1: Connect to Azure DevOps</h3>
           <ol>
             <li>Enter your Azure DevOps <strong>URL</strong> (e.g. <code>https://dev.azure.com/your-org</code>).</li>
@@ -271,11 +275,11 @@ export function App() {
           </ol>
           <p>If a saved profile exists you will see <strong>Saved connection found</strong> with options to confirm or edit.</p>
 
-          <h3>Enrichment field check</h3>
-          <p>After validation the app automatically checks if your project has the 22 enrichment custom fields (confidence scores, dependencies, quality metrics, etc.).</p>
+          <h3>Process template check</h3>
+          <p>After validation the app automatically checks that your project uses the expected process template for the selected process type.</p>
           <ul>
-            <li><strong>Fields present</strong> — you will see &ldquo;Enrichment fields verified&rdquo; and can proceed.</li>
-            <li><strong>Fields missing</strong> — the app shows which fields are missing and provides step-by-step instructions to change your project&apos;s process in Azure DevOps Organization Settings. After changing the process, return here and click <strong>Validate connection</strong> again.</li>
+            <li><strong>Process correct</strong> — you will see &ldquo;Process verified&rdquo; and can proceed.</li>
+            <li><strong>Process incorrect</strong> — the app shows the expected process name and provides step-by-step instructions to change your project&apos;s process in Azure DevOps Organization Settings. After changing the process, return here and click <strong>Validate connection</strong> again.</li>
           </ul>
 
           <h3>Step 2: Upload a document</h3>
@@ -306,7 +310,7 @@ export function App() {
           </ul>
 
           <h3>Configuration</h3>
-          <p>Click <strong>Configuration</strong> in the header to update your Azure DevOps connection at any time. Use <strong>Save &amp; validate</strong> to change to a different project and re-run the enrichment field check.</p>
+          <p>Click <strong>Configuration</strong> in the header to update your Azure DevOps connection at any time. Use <strong>Save &amp; validate</strong> to change to a different project and re-run the process template check.</p>
 
           <h3>Enrichment fields reference</h3>
           <p>Click <strong>Enrichment fields</strong> in the header to see the full list of 22 custom Azure DevOps fields used for backlog enrichment, including confidence scores, dependencies, quality metrics, effort estimates, and more.</p>
@@ -392,6 +396,9 @@ export function App() {
     setSetupState(state);
     setAzureDevOpsUrl(state.azureDevOpsUrl ?? "");
     setAzureDevOpsProject(state.azureDevOpsProject ?? "");
+    if (state.processType) {
+      setSelectedProcessType(state.processType);
+    }
   }
 
   async function getAccessToken(): Promise<string> {
@@ -435,21 +442,20 @@ export function App() {
           await refreshFiles(token);
           logLine("Connection profile loaded.");
 
-          // Check enrichment fields on load for validated connections
-          setEnrichmentChecking(true);
+          // Check process template on load for validated connections
+          setProcessChecking(true);
           try {
-            const enrichResult = await checkEnrichment(token);
-            setEnrichmentCheck(enrichResult);
-            if (enrichResult.hasEnrichmentFields) {
-              logLine(`Enrichment fields confirmed in process "${enrichResult.processName}".`);
+            const processResult = await checkProcess(token);
+            setProcessCheck(processResult);
+            if (processResult.hasCorrectProcess) {
+              logLine(`Process verified: using "${processResult.processName}".`);
             } else {
-              logLine(`Missing ${enrichResult.missingFieldCount} enrichment fields. Migration required.`);
-    
+              logLine(`Incorrect process "${processResult.processName}". Expected "${processResult.expectedProcessName}".`);
             }
           } catch {
-            logLine("Could not check enrichment fields.");
+            logLine("Could not check project process template.");
           } finally {
-            setEnrichmentChecking(false);
+            setProcessChecking(false);
           }
         }
       } catch (loadError) {
@@ -577,6 +583,7 @@ export function App() {
       azureDevOpsUrl: azureDevOpsUrl.trim() || undefined,
       azureDevOpsProject: azureDevOpsProject.trim() || undefined,
       azureDevOpsPat: includeSecrets ? azureDevOpsPat.trim() || undefined : undefined,
+      processType: selectedProcessType ?? undefined,
     };
   }
 
@@ -616,22 +623,21 @@ export function App() {
       setStatus("Successfully validated.");
       logLine("Connection validated successfully.");
 
-      // After validation succeeds, check enrichment fields
-      setEnrichmentChecking(true);
-      logLine("Checking project for enrichment custom fields...");
+      // After validation succeeds, check process template
+      setProcessChecking(true);
+      logLine("Checking project process template...");
       try {
-        const enrichResult = await checkEnrichment(token);
-        setEnrichmentCheck(enrichResult);
-        if (enrichResult.hasEnrichmentFields) {
-          logLine(`Enrichment fields found in process "${enrichResult.processName}".`);
+        const processResult = await checkProcess(token);
+        setProcessCheck(processResult);
+        if (processResult.hasCorrectProcess) {
+          logLine(`Process verified: using "${processResult.processName}".`);
         } else {
-          logLine(`Missing ${enrichResult.missingFieldCount} enrichment fields. Migration required.`);
-
+          logLine(`Incorrect process "${processResult.processName}". Expected "${processResult.expectedProcessName}".`);
         }
       } catch (err) {
-        logLine("Could not check enrichment fields: " + (err instanceof Error ? err.message : "unknown error"));
+        logLine("Could not check process template: " + (err instanceof Error ? err.message : "unknown error"));
       } finally {
-        setEnrichmentChecking(false);
+        setProcessChecking(false);
       }
     } catch (validationError) {
       const message = validationError instanceof Error ? validationError.message : "Validation failed";
@@ -833,70 +839,103 @@ export function App() {
       {showUserGuide ? renderUserGuide() : showEnrichmentFieldsPage ? renderEnrichmentFieldsPage() : !connectionReady ? (
         <main className="wizard-layout">
           <section className="panel control-panel">
-            {hasSavedConnection() ? (
-              <div className="setup-card">
-                <h3>Saved connection found</h3>
-                <p>Confirm existing details or make changes before validation.</p>
-                <div className="setup-actions">
-                  <button disabled={validatingConnection} onClick={() => void validateConnection(true)}>Confirm & validate</button>
-                </div>
-                {renderInlineSpinner("validate-connection", "Validating connection...")}
-              </div>
-            ) : null}
-
-            <h2>Step 1: Enter connection details</h2>
-            {renderConnectionFields()}
-            <div className="setup-actions">
-              <button disabled={validatingConnection} onClick={() => void saveConnectionDetails()}>Save details</button>
-              <button disabled={validatingConnection} onClick={() => void validateConnection(false)}>
-                {validatingConnection ? "Validating connection..." : "Validate connection"}
+            <h2>Choose Process Type</h2>
+            <p>Select the Azure DevOps process template your project should use.</p>
+            <div className="setup-actions" style={{ display: "flex", gap: 12 }}>
+              <button
+                onClick={() => setSelectedProcessType("agile-enrichment")}
+                style={{
+                  padding: "12px 20px", fontWeight: 600,
+                  background: selectedProcessType === "agile-enrichment" ? "#0058ab" : "#f5f5f5",
+                  color: selectedProcessType === "agile-enrichment" ? "#fff" : "#333",
+                  border: "2px solid " + (selectedProcessType === "agile-enrichment" ? "#0058ab" : "#ddd"),
+                  borderRadius: 8, cursor: "pointer"
+                }}
+              >
+                Agile with Enrichment
+              </button>
+              <button
+                onClick={() => setSelectedProcessType("finance-operations")}
+                style={{
+                  padding: "12px 20px", fontWeight: 600,
+                  background: selectedProcessType === "finance-operations" ? "#0058ab" : "#f5f5f5",
+                  color: selectedProcessType === "finance-operations" ? "#fff" : "#333",
+                  border: "2px solid " + (selectedProcessType === "finance-operations" ? "#0058ab" : "#ddd"),
+                  borderRadius: 8, cursor: "pointer"
+                }}
+              >
+                Finance &amp; Operations
               </button>
             </div>
-            {actionLoading === "save-connection" && (
-              <div style={{ margin: "12px 0", padding: 14, borderRadius: 10, background: "#e3f2fd", display: "flex", alignItems: "center", gap: 12 }}>
-                <span className="spinner-dot" aria-hidden="true" style={{ width: 14, height: 14, flexShrink: 0 }} />
-                <span style={{ fontWeight: 600, fontSize: "1rem" }}>Saving connection details...</span>
-              </div>
-            )}
-            {actionLoading === "validate-connection" && (
-              <div style={{ margin: "12px 0", padding: 14, borderRadius: 10, background: "#e3f2fd", display: "flex", alignItems: "center", gap: 12 }}>
-                <span className="spinner-dot" aria-hidden="true" style={{ width: 14, height: 14, flexShrink: 0 }} />
-                <span style={{ fontWeight: 600, fontSize: "1rem" }}>Validating connection to Azure DevOps...</span>
-              </div>
-            )}
 
-            {/* Enrichment check — blocks progress until fields are confirmed */}
-            {setupState?.isValidated && (
-              <div style={{ margin: "16px 0", padding: 16, borderRadius: 10, background: enrichmentCheck?.hasEnrichmentFields ? "#e6f4ea" : enrichmentChecking ? "#e3f2fd" : "#fff3e0" }}>
-                {enrichmentChecking ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <span className="spinner-dot" aria-hidden="true" style={{ width: 14, height: 14, flexShrink: 0 }} />
-                    <span style={{ fontWeight: 600, fontSize: "1rem" }}>Validating enrichment fields on your project...</span>
-                  </div>
-                ) : enrichmentCheck?.hasEnrichmentFields ? (
-                  <p style={{ margin: 0, color: "#2e7d32", fontWeight: 600, fontSize: "1rem" }}>Enrichment fields verified in process &ldquo;{enrichmentCheck.processName}&rdquo;.</p>
-                ) : enrichmentCheck ? (
-                  <div>
-                    <h3 style={{ margin: "0 0 8px", color: "#e65100" }}>Enrichment Fields Missing</h3>
-                    <p style={{ margin: "0 0 12px" }}>
-                      Your project&apos;s process template (&ldquo;{enrichmentCheck.processName}&rdquo;) is missing <strong>{enrichmentCheck.missingFieldCount}</strong> enrichment custom fields.
-                    </p>
-                    <p style={{ margin: "0 0 12px" }}>
-                      To fix this, change your project&apos;s process in Azure DevOps to one that includes the enrichment fields:
-                    </p>
-                    <ol style={{ margin: "0 0 12px", paddingLeft: 20 }}>
-                      <li>Go to <strong>Organization Settings</strong> &gt; <strong>Process</strong></li>
-                      <li>Find your current process (&ldquo;{enrichmentCheck.processName}&rdquo;) and open it</li>
-                      <li>Select the <strong>Projects</strong> tab</li>
-                      <li>Click the <strong>&hellip;</strong> menu next to your project and select <strong>Change process</strong></li>
-                      <li>Choose a process that includes enrichment fields (e.g. &ldquo;Agile with MoSCoW&rdquo;, &ldquo;Power Platform Agile&rdquo;)</li>
-                    </ol>
-                    <p style={{ margin: 0 }}>
-                      After changing the process, return here and click <strong>Validate connection</strong> again.
-                    </p>
+            {selectedProcessType !== null && (
+              <>
+                {hasSavedConnection() ? (
+                  <div className="setup-card">
+                    <h3>Saved connection found</h3>
+                    <p>Confirm existing details or make changes before validation.</p>
+                    <div className="setup-actions">
+                      <button disabled={validatingConnection} onClick={() => void validateConnection(true)}>Confirm &amp; validate</button>
+                    </div>
+                    {renderInlineSpinner("validate-connection", "Validating connection...")}
                   </div>
                 ) : null}
-              </div>
+
+                <h2>Step 1: Enter connection details</h2>
+                {renderConnectionFields()}
+                <div className="setup-actions">
+                  <button disabled={validatingConnection} onClick={() => void saveConnectionDetails()}>Save details</button>
+                  <button disabled={validatingConnection} onClick={() => void validateConnection(false)}>
+                    {validatingConnection ? "Validating connection..." : "Validate connection"}
+                  </button>
+                </div>
+                {actionLoading === "save-connection" && (
+                  <div style={{ margin: "12px 0", padding: 14, borderRadius: 10, background: "#e3f2fd", display: "flex", alignItems: "center", gap: 12 }}>
+                    <span className="spinner-dot" aria-hidden="true" style={{ width: 14, height: 14, flexShrink: 0 }} />
+                    <span style={{ fontWeight: 600, fontSize: "1rem" }}>Saving connection details...</span>
+                  </div>
+                )}
+                {actionLoading === "validate-connection" && (
+                  <div style={{ margin: "12px 0", padding: 14, borderRadius: 10, background: "#e3f2fd", display: "flex", alignItems: "center", gap: 12 }}>
+                    <span className="spinner-dot" aria-hidden="true" style={{ width: 14, height: 14, flexShrink: 0 }} />
+                    <span style={{ fontWeight: 600, fontSize: "1rem" }}>Validating connection to Azure DevOps...</span>
+                  </div>
+                )}
+
+                {/* Process check — blocks progress until correct process is confirmed */}
+                {setupState?.isValidated && (
+                  <div style={{ margin: "16px 0", padding: 16, borderRadius: 10, background: processCheck?.hasCorrectProcess ? "#e6f4ea" : processChecking ? "#e3f2fd" : "#fff3e0" }}>
+                    {processChecking ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <span className="spinner-dot" aria-hidden="true" style={{ width: 14, height: 14, flexShrink: 0 }} />
+                        <span style={{ fontWeight: 600, fontSize: "1rem" }}>Checking project process template...</span>
+                      </div>
+                    ) : processCheck?.hasCorrectProcess ? (
+                      <p style={{ margin: 0, color: "#2e7d32", fontWeight: 600, fontSize: "1rem" }}>Process verified: using &ldquo;{processCheck.processName}&rdquo;.</p>
+                    ) : processCheck ? (
+                      <div>
+                        <h3 style={{ margin: "0 0 8px", color: "#e65100" }}>Incorrect Process Template</h3>
+                        <p style={{ margin: "0 0 12px" }}>
+                          Your project is using the &ldquo;{processCheck.processName}&rdquo; process, but the expected process is &ldquo;{processCheck.expectedProcessName}&rdquo;.
+                        </p>
+                        <p style={{ margin: "0 0 12px" }}>
+                          To fix this, change your project&apos;s process in Azure DevOps:
+                        </p>
+                        <ol style={{ margin: "0 0 12px", paddingLeft: 20 }}>
+                          <li>Go to <strong>Organization Settings</strong> &gt; <strong>Process</strong></li>
+                          <li>Find your current process (&ldquo;{processCheck.processName}&rdquo;) and open it</li>
+                          <li>Select the <strong>Projects</strong> tab</li>
+                          <li>Click the <strong>&hellip;</strong> menu next to your project and select <strong>Change process</strong></li>
+                          <li>Choose the &ldquo;{processCheck.expectedProcessName}&rdquo; process</li>
+                        </ol>
+                        <p style={{ margin: 0 }}>
+                          After changing the process, return here and click <strong>Validate connection</strong> again.
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+              </>
             )}
 
             <h2>Step 2: Upload + analysis</h2>
@@ -1014,7 +1053,7 @@ export function App() {
         <div className="modal-backdrop">
           <div className="modal-card">
             <h3>Connection Validated</h3>
-            <p>Your Azure DevOps connection is valid. Checking enrichment fields...</p>
+            <p>Your Azure DevOps connection is valid. Checking process template...</p>
             <button onClick={() => setShowValidationSuccess(false)}>
               Continue
             </button>

@@ -1,9 +1,7 @@
 import {
   ChatResponse,
-  EnrichmentCheckResult,
   FileListResponse,
-  MigrateEnrichmentPayload,
-  MigrateEnrichmentResult,
+  ProcessCheckResult,
   ProcessResultData,
   SetupConfigPayload,
   SetupConfigState,
@@ -99,17 +97,10 @@ export async function validateSetupConfig(token: string, payload: SetupConfigPay
   });
 }
 
-export async function checkEnrichment(token: string): Promise<EnrichmentCheckResult> {
-  return request<EnrichmentCheckResult>("/setup/check-enrichment", token, {
+export async function checkProcess(token: string): Promise<ProcessCheckResult> {
+  return request<ProcessCheckResult>("/setup/check-process", token, {
     method: "POST",
     body: "{}",
-  });
-}
-
-export async function migrateEnrichment(token: string, payload: MigrateEnrichmentPayload): Promise<MigrateEnrichmentResult> {
-  return request<MigrateEnrichmentResult>("/setup/migrate-enrichment", token, {
-    method: "POST",
-    body: JSON.stringify(payload),
   });
 }
 

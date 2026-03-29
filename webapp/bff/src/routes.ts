@@ -56,10 +56,17 @@ function randomFallbackFact(): string {
   return fallbackFacts[Math.floor(Math.random() * fallbackFacts.length)] ?? fallbackFacts[0];
 }
 
+const PROCESS_TYPE_MAP: Record<string, string> = {
+  "agile-enrichment": "Agile with Enrichment",
+  "finance-operations": "Finance and Operations",
+};
+
 function parseSetupBody(req: Request): SetupConnectionInput {
   const body = req.body as Partial<SetupConnectionInput>;
+  const processType = body?.processType === "agile-enrichment" || body?.processType === "finance-operations" ? body.processType : undefined;
 
   return {
+    processType,
     azureDevOpsOrg: normalizeOptionalString(body?.azureDevOpsOrg),
     azureDevOpsUrl: normalizeOptionalString(body?.azureDevOpsUrl),
     azureDevOpsProject: normalizeOptionalString(body?.azureDevOpsProject),
@@ -223,7 +230,7 @@ export function createApiRouter(config: AppConfig) {
     }
   });
 
-  router.post("/setup/check-enrichment", validateRateLimit, async (req: Request, res: Response) => {
+  router.post("/setup/check-process", validateRateLimit, async (req: Request, res: Response) => {
     try {
       const mcpClient = createMcpClient(req);
       const userId = getUserId(req);
@@ -233,10 +240,20 @@ export function createApiRouter(config: AppConfig) {
         res.status(400).json({ error: "No project configured. Validate your connection first." });
         return;
       }
-      const result = await mcpClient.executeTool("check_enrichment_fields", { project });
+      const processType = state.processType;
+      if (!processType) {
+        res.status(400).json({ error: "No process type selected. Choose a process type first." });
+        return;
+      }
+      const expectedProcessName = PROCESS_TYPE_MAP[processType];
+      if (!expectedProcessName) {
+        res.status(400).json({ error: `Unknown process type: ${processType}` });
+        return;
+      }
+      const result = await mcpClient.executeTool("check_project_process", { project, expectedProcessName });
       res.json(result);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to check enrichment fields";
+      const message = error instanceof Error ? error.message : "Failed to check project process";
       res.status(502).json({ error: message });
     }
   });
