@@ -160,3 +160,61 @@ export interface MigrateEnrichmentResult {
   boardUrl?: string;
   setupState?: SetupConfigState;
 }
+
+// ── Backlog Health Dashboard ────────────────────────────────────────
+
+export interface BacklogHealthSummary {
+  totalStories: number;
+  ragDistribution: { red: number; amber: number; green: number; unscored: number };
+  confidenceDistribution: { bucket: string; count: number }[];
+  qualityDistribution: { bucket: string; count: number }[];
+  effortBreakdown: Record<string, number>;
+  dependencyGraph: { id: number; title: string; dependsOn: string[]; blocks: string[] }[];
+  missingPiecesHeatmap: { issue: string; count: number }[];
+  averageConfidence: number;
+  averageQuality: number;
+  coverageGaps: {
+    noConfidence: number;
+    noDependencies: number;
+    noEffort: number;
+    noQuality: number;
+    noDoD: number;
+  };
+}
+
+export interface StakeholderSummary {
+  projectName: string;
+  exportDate: string;
+  epicCount: number;
+  featureCount: number;
+  storyCount: number;
+  overallHealth: { red: number; amber: number; green: number };
+  averageConfidence: number;
+  averageQuality: number;
+  topRisks: string[];
+  effortDistribution: Record<string, number>;
+}
+
+export interface RefinementSuggestion {
+  workItemId: number;
+  currentTitle: string;
+  currentDescription: string;
+  currentAcceptanceCriteria: string[];
+  suggestedTitle?: string;
+  suggestedDescription?: string;
+  suggestedAcceptanceCriteria?: string[];
+  confidenceBefore: number;
+  estimatedConfidenceAfter: number;
+  improvements: string[];
+}
+
+export interface RRAIDItem {
+  id: string;
+  category: "Risk" | "Requirement" | "Assumption" | "Issue" | "Dependency";
+  title: string;
+  description: string;
+  severity: "Low" | "Medium" | "High";
+  sourceFile: string;
+  sourceExcerpt: string;
+  relatedStoryTitles: string[];
+}

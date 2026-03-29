@@ -104,6 +104,70 @@ export async function checkProcess(token: string): Promise<ProcessCheckResult> {
   });
 }
 
+// ── Backlog Health Dashboard ──────────────────────────────────────
+
+export async function getBacklogHealth(token: string): Promise<import("./types").BacklogHealthSummary> {
+  return request<import("./types").BacklogHealthSummary>("/dashboard/health", token, { method: "GET" });
+}
+
+export async function downloadExport(token: string, format: "excel" | "csv"): Promise<void> {
+  const response = await fetch(`${baseUrl}/export/${format === "excel" ? "excel" : "excel"}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) throw new Error(`Export failed (${response.status})`);
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `backlog-export.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+export async function getStakeholderSummary(token: string): Promise<import("./types").StakeholderSummary> {
+  return request<import("./types").StakeholderSummary>("/export/summary", token, { method: "GET" });
+}
+
+export async function suggestRefinement(token: string, workItemId: number): Promise<import("./types").RefinementSuggestion> {
+  return request<import("./types").RefinementSuggestion>("/refine/suggest", token, {
+    method: "POST",
+    body: JSON.stringify({ workItemId }),
+  });
+}
+
+export async function applyRefinement(token: string, payload: {
+  workItemId: number;
+  title?: string;
+  description?: string;
+  acceptanceCriteria?: string[];
+}): Promise<{ result: string }> {
+  return request<{ result: string }>("/refine/apply", token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function extractRRAID(token: string, fileName: string): Promise<{ items: import("./types").RRAIDItem[]; itemCount: number }> {
+  return request<{ items: import("./types").RRAIDItem[]; itemCount: number }>("/rraid/extract", token, {
+    method: "POST",
+    body: JSON.stringify({ fileName }),
+  });
+}
+
+export async function createRRAIDItems(token: string, items: import("./types").RRAIDItem[]): Promise<{ created: number }> {
+  return request<{ created: number }>("/rraid/create", token, {
+    method: "POST",
+    body: JSON.stringify({ items }),
+  });
+}
+
+export async function listRRAIDItems(token: string, category?: string): Promise<{ items: any[]; count: number }> {
+  const params = category ? `?category=${encodeURIComponent(category)}` : "";
+  return request<{ items: any[]; count: number }>(`/rraid/list${params}`, token, { method: "GET" });
+}
+
 export async function getRandomFact(token: string): Promise<{ fact: string }> {
   return request<{ fact: string }>("/facts/random", token, {
     method: "GET",

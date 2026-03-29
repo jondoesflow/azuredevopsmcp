@@ -4,15 +4,24 @@ import { useMsal } from "@azure/msal-react";
 import {
   checkProcess,
   deleteAllFiles,
+  downloadExport,
+  getBacklogHealth,
   getFiles,
   getRandomFact,
   getSetupConfig,
+  getStakeholderSummary,
   processDocument,
   saveSetupConfig,
+  suggestRefinement,
+  applyRefinement,
+  extractRRAID,
+  createRRAIDItems,
+  listRRAIDItems,
   uploadFile,
   validateSetupConfig,
 } from "./api";
-import { BacklogReviewResult, ProcessCheckResult, ProcessType, SetupConfigPayload, SetupConfigState, UploadedFile } from "./types";
+import { BacklogHealthSummary, BacklogReviewResult, ProcessCheckResult, ProcessType, RefinementSuggestion, RRAIDItem, SetupConfigPayload, SetupConfigState, StakeholderSummary, UploadedFile } from "./types";
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
 const bffScope = import.meta.env.VITE_BFF_SCOPE as string;
 type LoadingAction =
@@ -190,6 +199,18 @@ export function App() {
   const [review, setReview] = useState<BacklogReviewResult | null>(null);
   const [showEnrichmentFieldsPage, setShowEnrichmentFieldsPage] = useState(false);
   const [showUserGuide, setShowUserGuide] = useState(false);
+  const [showHealthDashboard, setShowHealthDashboard] = useState(false);
+  const [showRRAIDLog, setShowRRAIDLog] = useState(false);
+  const [rraidItems, setRraidItems] = useState<RRAIDItem[]>([]);
+  const [rraidLoading, setRraidLoading] = useState(false);
+  const [rraidFilter, setRraidFilter] = useState<string>("All");
+  const [rraidSelected, setRraidSelected] = useState<Set<string>>(new Set());
+  const [healthData, setHealthData] = useState<BacklogHealthSummary | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [stakeholderSummary, setStakeholderSummary] = useState<StakeholderSummary | null>(null);
+  const [refinementTarget, setRefinementTarget] = useState<number | null>(null);
+  const [refinementSuggestion, setRefinementSuggestion] = useState<RefinementSuggestion | null>(null);
+  const [refinementLoading, setRefinementLoading] = useState(false);
   const [processCheck, setProcessCheck] = useState<ProcessCheckResult | null>(null);
   const [processChecking, setProcessChecking] = useState(false);
   const [selectedProcessType, setSelectedProcessType] = useState<ProcessType | null>(null);
@@ -244,6 +265,7 @@ export function App() {
                   <strong>{item.title}</strong>
                   <p>{item.enrichment?.missingPieces?.issues?.[0] ?? "Needs refinement before implementation."}</p>
                 </div>
+                <button onClick={() => void handleRefine(Number(item.id))} style={{ fontSize: 11, padding: "2px 8px" }}>Refine</button>
                 <span className="confidence-pill">{item.enrichment?.confidence?.overall ?? 0}</span>
               </li>
             ))}
@@ -253,10 +275,515 @@ export function App() {
     );
   }
 
+  // ── Backlog Health Dashboard ──────────────────────────────────────
+
+  const RAG_COLORS = ["#e74c3c", "#f39c12", "#27ae60", "#95a5a6"];
+
+  async function loadHealthData() {
+    setHealthLoading(true);
+    try {
+      const token = await acquireToken();
+      if (!token) return;
+      const data = await getBacklogHealth(token);
+      setHealthData(data);
+    } catch (err) {
+      logLine(`Health data error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setHealthLoading(false);
+    }
+  }
+
+  async function handleExport() {
+    try {
+      const token = await acquireToken();
+      if (!token) return;
+      logLine("Exporting backlog to CSV...");
+      await downloadExport(token, "csv");
+      logLine("Export downloaded.");
+    } catch (err) {
+      logLine(`Export error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async function loadStakeholderSummary() {
+    try {
+      const token = await acquireToken();
+      if (!token) return;
+      const summary = await getStakeholderSummary(token);
+      setStakeholderSummary(summary);
+    } catch (err) {
+      logLine(`Summary error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  function renderHealthDashboard(): JSX.Element {
+    const rag = healthData?.ragDistribution;
+    const ragData = rag ? [
+      { name: "Red (<40)", value: rag.red },
+      { name: "Amber (40-70)", value: rag.amber },
+      { name: "Green (>70)", value: rag.green },
+      { name: "Unscored", value: rag.unscored },
+    ].filter((d) => d.value > 0) : [];
+
+    const effortData = healthData ? Object.entries(healthData.effortBreakdown)
+      .filter(([, v]) => v > 0)
+      .map(([name, value]) => ({ name, value })) : [];
+
+    return (
+      <main className="fields-layout">
+        <section className="panel fields-panel" style={{ maxWidth: "100%" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h2 style={{ margin: 0 }}>Backlog Health Dashboard</h2>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={loadHealthData} disabled={healthLoading}>
+                {healthLoading ? "Loading..." : "Refresh"}
+              </button>
+              <button onClick={handleExport}>Export CSV</button>
+              <button onClick={loadStakeholderSummary}>Stakeholder Summary</button>
+            </div>
+          </div>
+
+          {!healthData && !healthLoading && (
+            <p style={{ color: "#888" }}>Click <strong>Refresh</strong> to load health data from your Azure DevOps project.</p>
+          )}
+
+          {healthLoading && <div className="validation-spinner" style={{ margin: "40px auto" }}><div className="spinner" /></div>}
+
+          {healthData && (
+            <>
+              {/* KPI cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 24 }}>
+                <div className="setup-card" style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 28, fontWeight: 700 }}>{healthData.totalStories}</div>
+                  <div style={{ fontSize: 12, color: "#888" }}>Total Stories</div>
+                </div>
+                <div className="setup-card" style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 28, fontWeight: 700, color: healthData.averageConfidence < 40 ? "#e74c3c" : healthData.averageConfidence < 70 ? "#f39c12" : "#27ae60" }}>
+                    {healthData.averageConfidence}%
+                  </div>
+                  <div style={{ fontSize: 12, color: "#888" }}>Avg Confidence</div>
+                </div>
+                <div className="setup-card" style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 28, fontWeight: 700, color: healthData.averageQuality < 40 ? "#e74c3c" : healthData.averageQuality < 70 ? "#f39c12" : "#27ae60" }}>
+                    {healthData.averageQuality}%
+                  </div>
+                  <div style={{ fontSize: 12, color: "#888" }}>Avg Quality</div>
+                </div>
+                <div className="setup-card" style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 28, fontWeight: 700, color: "#e74c3c" }}>{healthData.ragDistribution.red}</div>
+                  <div style={{ fontSize: 12, color: "#888" }}>At Risk (Red)</div>
+                </div>
+              </div>
+
+              {/* Charts row */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
+                {/* RAG Donut */}
+                <div className="setup-card">
+                  <h4 style={{ marginTop: 0 }}>RAG Distribution</h4>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <PieChart>
+                      <Pie data={ragData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={80} label>
+                        {ragData.map((_, i) => <Cell key={i} fill={RAG_COLORS[i % RAG_COLORS.length]} />)}
+                      </Pie>
+                      <Tooltip />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Confidence Histogram */}
+                <div className="setup-card">
+                  <h4 style={{ marginTop: 0 }}>Confidence Distribution</h4>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={healthData.confidenceDistribution}>
+                      <XAxis dataKey="bucket" />
+                      <YAxis />
+                      <Tooltip />
+                      <Bar dataKey="count" fill="#0078d4" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Effort Breakdown */}
+                <div className="setup-card">
+                  <h4 style={{ marginTop: 0 }}>Effort Breakdown</h4>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={effortData} layout="vertical">
+                      <XAxis type="number" />
+                      <YAxis type="category" dataKey="name" width={60} />
+                      <Tooltip />
+                      <Bar dataKey="value" fill="#6c5ce7" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Coverage Gaps */}
+                <div className="setup-card">
+                  <h4 style={{ marginTop: 0 }}>Coverage Gaps</h4>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <tbody>
+                      {Object.entries(healthData.coverageGaps).map(([key, val]) => (
+                        <tr key={key} style={{ borderBottom: "1px solid #eee" }}>
+                          <td style={{ padding: "6px 8px" }}>{key.replace("no", "No ")}</td>
+                          <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 600, color: (val as number) > 0 ? "#e74c3c" : "#27ae60" }}>
+                            {val as number} / {healthData.totalStories}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Missing pieces heatmap */}
+              {healthData.missingPiecesHeatmap.length > 0 && (
+                <div className="setup-card" style={{ marginBottom: 16 }}>
+                  <h4 style={{ marginTop: 0 }}>Top Missing Pieces</h4>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {healthData.missingPiecesHeatmap.map((item) => (
+                      <span key={item.issue} style={{
+                        padding: "4px 10px",
+                        borderRadius: 12,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        background: item.count > 5 ? "#fce4e4" : item.count > 2 ? "#fff3e0" : "#e8f5e9",
+                        color: item.count > 5 ? "#c0392b" : item.count > 2 ? "#e67e22" : "#27ae60",
+                      }}>
+                        {item.issue} ({item.count})
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Dependencies */}
+              {healthData.dependencyGraph.length > 0 && (
+                <div className="setup-card">
+                  <h4 style={{ marginTop: 0 }}>Stories with Dependencies ({healthData.dependencyGraph.length})</h4>
+                  <div style={{ maxHeight: 200, overflowY: "auto", fontSize: 13 }}>
+                    {healthData.dependencyGraph.slice(0, 20).map((dep) => (
+                      <div key={dep.id} style={{ padding: "4px 0", borderBottom: "1px solid #f0f0f0" }}>
+                        <strong>#{dep.id}</strong> {dep.title}
+                        {dep.dependsOn.length > 0 && <span style={{ color: "#e67e22", marginLeft: 8 }}>depends on: {dep.dependsOn.join(", ")}</span>}
+                        {dep.blocks.length > 0 && <span style={{ color: "#e74c3c", marginLeft: 8 }}>blocks: {dep.blocks.join(", ")}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Stakeholder summary */}
+          {stakeholderSummary && (
+            <div className="setup-card" style={{ marginTop: 16, background: "#f0f4f8" }}>
+              <h4 style={{ marginTop: 0 }}>Stakeholder Summary — {stakeholderSummary.projectName}</h4>
+              <p style={{ fontSize: 12, color: "#888" }}>Generated {new Date(stakeholderSummary.exportDate).toLocaleString()}</p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 12 }}>
+                <div><strong>{stakeholderSummary.epicCount}</strong> Epics</div>
+                <div><strong>{stakeholderSummary.featureCount}</strong> Features</div>
+                <div><strong>{stakeholderSummary.storyCount}</strong> Stories</div>
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <strong>Health:</strong>{" "}
+                <span style={{ color: "#e74c3c" }}>{stakeholderSummary.overallHealth.red} Red</span>{" / "}
+                <span style={{ color: "#f39c12" }}>{stakeholderSummary.overallHealth.amber} Amber</span>{" / "}
+                <span style={{ color: "#27ae60" }}>{stakeholderSummary.overallHealth.green} Green</span>
+              </div>
+              {stakeholderSummary.topRisks.length > 0 && (
+                <div><strong>Top Risks:</strong> {stakeholderSummary.topRisks.join("; ")}</div>
+              )}
+            </div>
+          )}
+        </section>
+      </main>
+    );
+  }
+
+  async function handleRefine(workItemId: number) {
+    setRefinementTarget(workItemId);
+    setRefinementSuggestion(null);
+    setRefinementLoading(true);
+    try {
+      const token = await acquireToken();
+      if (!token) return;
+      const suggestion = await suggestRefinement(token, workItemId);
+      setRefinementSuggestion(suggestion);
+    } catch (err) {
+      logLine(`Refinement error: ${err instanceof Error ? err.message : String(err)}`);
+      setRefinementTarget(null);
+    } finally {
+      setRefinementLoading(false);
+    }
+  }
+
+  async function handleApplyRefinement(applyWhat: "all" | "title" | "description" | "ac") {
+    if (!refinementSuggestion) return;
+    try {
+      const token = await acquireToken();
+      if (!token) return;
+      const payload: Record<string, unknown> = { workItemId: refinementSuggestion.workItemId };
+      if ((applyWhat === "all" || applyWhat === "title") && refinementSuggestion.suggestedTitle) {
+        payload.title = refinementSuggestion.suggestedTitle;
+      }
+      if ((applyWhat === "all" || applyWhat === "description") && refinementSuggestion.suggestedDescription) {
+        payload.description = refinementSuggestion.suggestedDescription;
+      }
+      if ((applyWhat === "all" || applyWhat === "ac") && refinementSuggestion.suggestedAcceptanceCriteria) {
+        payload.acceptanceCriteria = refinementSuggestion.suggestedAcceptanceCriteria;
+      }
+      await applyRefinement(token, payload as any);
+      logLine(`Refinement applied to work item #${refinementSuggestion.workItemId}`);
+      setRefinementTarget(null);
+      setRefinementSuggestion(null);
+    } catch (err) {
+      logLine(`Apply error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async function handleExtractRRAID() {
+    const selectedFileName = files[0]?.fileName;
+    if (!selectedFileName) { logLine("Select a file first."); return; }
+    setRraidLoading(true);
+    try {
+      const token = await acquireToken();
+      if (!token) return;
+      const result = await extractRRAID(token, selectedFileName);
+      setRraidItems(result.items || []);
+      logLine(`RRAID extraction: found ${result.itemCount} items.`);
+    } catch (err) {
+      logLine(`RRAID error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRraidLoading(false);
+    }
+  }
+
+  async function handleCreateRRAIDInADO() {
+    const selected = rraidItems.filter((item) => rraidSelected.has(item.id));
+    if (selected.length === 0) { logLine("Select RRAID items to create."); return; }
+    try {
+      const token = await acquireToken();
+      if (!token) return;
+      logLine(`Creating ${selected.length} RRAID items in ADO...`);
+      const result = await createRRAIDItems(token, selected);
+      logLine(`Created ${result.created} RRAID items as Issue work items.`);
+      setRraidSelected(new Set());
+    } catch (err) {
+      logLine(`RRAID create error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async function handleLoadRRAIDFromADO() {
+    setRraidLoading(true);
+    try {
+      const token = await acquireToken();
+      if (!token) return;
+      const cat = rraidFilter === "All" ? undefined : rraidFilter;
+      const result = await listRRAIDItems(token, cat);
+      setRraidItems((result.items || []).map((item: any) => ({
+        id: String(item.id),
+        category: item.category || "Issue",
+        title: item.title || "",
+        description: "",
+        severity: item.severity || "Low",
+        sourceFile: "",
+        sourceExcerpt: "",
+        relatedStoryTitles: [],
+      })));
+      logLine(`Loaded ${result.count} RRAID items from ADO.`);
+    } catch (err) {
+      logLine(`RRAID load error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRraidLoading(false);
+    }
+  }
+
+  const RRAID_CATEGORIES = ["All", "Risk", "Requirement", "Assumption", "Issue", "Dependency"];
+  const SEVERITY_COLORS: Record<string, string> = { High: "#e74c3c", Medium: "#f39c12", Low: "#27ae60" };
+  const CATEGORY_COLORS: Record<string, string> = { Risk: "#e74c3c", Requirement: "#3498db", Assumption: "#9b59b6", Issue: "#e67e22", Dependency: "#1abc9c" };
+
+  function renderRRAIDLog(): JSX.Element {
+    const filtered = rraidFilter === "All" ? rraidItems : rraidItems.filter((i) => i.category === rraidFilter);
+
+    return (
+      <main className="fields-layout">
+        <section className="panel fields-panel" style={{ maxWidth: "100%" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h2 style={{ margin: 0 }}>RRAID Log</h2>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={handleExtractRRAID} disabled={rraidLoading}>Extract from Document</button>
+              <button onClick={handleLoadRRAIDFromADO} disabled={rraidLoading}>Load from ADO</button>
+              <button onClick={handleCreateRRAIDInADO} disabled={rraidSelected.size === 0}>
+                Create Selected in ADO ({rraidSelected.size})
+              </button>
+            </div>
+          </div>
+
+          {/* Category filter tabs */}
+          <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
+            {RRAID_CATEGORIES.map((cat) => (
+              <button
+                key={cat}
+                onClick={() => setRraidFilter(cat)}
+                style={{
+                  padding: "4px 12px",
+                  borderRadius: 16,
+                  fontSize: 12,
+                  fontWeight: rraidFilter === cat ? 700 : 400,
+                  background: rraidFilter === cat ? (CATEGORY_COLORS[cat] || "#0078d4") : "#f0f0f0",
+                  color: rraidFilter === cat ? "#fff" : "#333",
+                  border: "none",
+                  cursor: "pointer",
+                }}
+              >
+                {cat} {cat !== "All" && `(${rraidItems.filter((i) => i.category === cat).length})`}
+              </button>
+            ))}
+          </div>
+
+          {rraidLoading && <div className="validation-spinner"><div className="spinner" /></div>}
+
+          {filtered.length === 0 && !rraidLoading && (
+            <p style={{ color: "#888" }}>No RRAID items found. Click <strong>Extract from Document</strong> to analyze an uploaded file.</p>
+          )}
+
+          {filtered.length > 0 && (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: "2px solid #ddd", textAlign: "left" }}>
+                  <th style={{ padding: 8, width: 32 }}>
+                    <input
+                      type="checkbox"
+                      checked={filtered.every((i) => rraidSelected.has(i.id))}
+                      onChange={(e) => {
+                        const next = new Set(rraidSelected);
+                        for (const item of filtered) {
+                          if (e.target.checked) next.add(item.id); else next.delete(item.id);
+                        }
+                        setRraidSelected(next);
+                      }}
+                    />
+                  </th>
+                  <th style={{ padding: 8 }}>Category</th>
+                  <th style={{ padding: 8 }}>Severity</th>
+                  <th style={{ padding: 8 }}>Title</th>
+                  <th style={{ padding: 8 }}>Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((item) => (
+                  <tr key={item.id} style={{ borderBottom: "1px solid #eee" }}>
+                    <td style={{ padding: 8 }}>
+                      <input
+                        type="checkbox"
+                        checked={rraidSelected.has(item.id)}
+                        onChange={(e) => {
+                          const next = new Set(rraidSelected);
+                          if (e.target.checked) next.add(item.id); else next.delete(item.id);
+                          setRraidSelected(next);
+                        }}
+                      />
+                    </td>
+                    <td style={{ padding: 8 }}>
+                      <span style={{
+                        padding: "2px 8px", borderRadius: 8, fontSize: 11, fontWeight: 600,
+                        background: CATEGORY_COLORS[item.category] || "#888", color: "#fff",
+                      }}>{item.category}</span>
+                    </td>
+                    <td style={{ padding: 8, color: SEVERITY_COLORS[item.severity] || "#333", fontWeight: 600 }}>
+                      {item.severity}
+                    </td>
+                    <td style={{ padding: 8 }}>{item.title}</td>
+                    <td style={{ padding: 8, color: "#888", fontSize: 11 }}>{item.sourceFile}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      </main>
+    );
+  }
+
+  function renderRefinementModal(): JSX.Element | null {
+    if (refinementTarget === null) return null;
+    return (
+      <div style={{
+        position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+        background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
+      }}>
+        <div style={{
+          background: "#fff", borderRadius: 12, padding: 24, maxWidth: 700, width: "90%",
+          maxHeight: "80vh", overflowY: "auto", boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h3 style={{ margin: 0 }}>Story Refinement — #{refinementTarget}</h3>
+            <button onClick={() => { setRefinementTarget(null); setRefinementSuggestion(null); }}>Close</button>
+          </div>
+
+          {refinementLoading && <div className="validation-spinner"><div className="spinner" /></div>}
+
+          {refinementSuggestion && (
+            <>
+              {refinementSuggestion.improvements.length === 0 ? (
+                <p style={{ color: "#27ae60", fontWeight: 600 }}>This story looks good! No refinements suggested.</p>
+              ) : (
+                <>
+                  <p style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>
+                    Confidence: <strong>{refinementSuggestion.confidenceBefore}%</strong> → estimated <strong style={{ color: "#27ae60" }}>{refinementSuggestion.estimatedConfidenceAfter}%</strong>
+                  </p>
+
+                  <div style={{ marginBottom: 12 }}>
+                    <strong>Improvements:</strong>
+                    <ul style={{ margin: "4px 0", paddingLeft: 20, fontSize: 13 }}>
+                      {refinementSuggestion.improvements.map((imp, i) => <li key={i}>{imp}</li>)}
+                    </ul>
+                  </div>
+
+                  {refinementSuggestion.suggestedTitle && (
+                    <div style={{ marginBottom: 12, padding: 12, background: "#f0f8f0", borderRadius: 8 }}>
+                      <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>TITLE</div>
+                      <div style={{ fontSize: 13, color: "#c0392b", textDecoration: "line-through" }}>{refinementSuggestion.currentTitle}</div>
+                      <div style={{ fontSize: 13, color: "#27ae60", fontWeight: 600 }}>{refinementSuggestion.suggestedTitle}</div>
+                    </div>
+                  )}
+
+                  {refinementSuggestion.suggestedDescription && (
+                    <div style={{ marginBottom: 12, padding: 12, background: "#f0f8f0", borderRadius: 8 }}>
+                      <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>DESCRIPTION</div>
+                      <div style={{ fontSize: 12, color: "#c0392b", whiteSpace: "pre-wrap", maxHeight: 80, overflow: "hidden" }}>{refinementSuggestion.currentDescription.slice(0, 200)}...</div>
+                      <div style={{ fontSize: 12, color: "#27ae60", whiteSpace: "pre-wrap", maxHeight: 120, overflow: "auto", marginTop: 4 }}>{refinementSuggestion.suggestedDescription}</div>
+                    </div>
+                  )}
+
+                  {refinementSuggestion.suggestedAcceptanceCriteria && (
+                    <div style={{ marginBottom: 12, padding: 12, background: "#f0f8f0", borderRadius: 8 }}>
+                      <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>ACCEPTANCE CRITERIA</div>
+                      <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "#27ae60" }}>
+                        {refinementSuggestion.suggestedAcceptanceCriteria.map((ac, i) => <li key={i} style={{ marginBottom: 2 }}>{ac}</li>)}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+                    <button onClick={() => void handleApplyRefinement("all")} style={{ background: "#0078d4", color: "#fff" }}>Apply All</button>
+                    {refinementSuggestion.suggestedTitle && <button onClick={() => void handleApplyRefinement("title")}>Title Only</button>}
+                    {refinementSuggestion.suggestedDescription && <button onClick={() => void handleApplyRefinement("description")}>Description Only</button>}
+                    {refinementSuggestion.suggestedAcceptanceCriteria && <button onClick={() => void handleApplyRefinement("ac")}>AC Only</button>}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   function renderUserGuide(): JSX.Element {
     return (
       <main className="fields-layout">
-        <section className="panel fields-panel" style={{ maxWidth: 820 }}>
+        <section className="panel fields-panel" style={{ maxWidth: "100%" }}>
           <h2>User Guide</h2>
           <p style={{ opacity: 0.8, marginBottom: 16 }}>Step-by-step guide to using the Backlog Assistant.</p>
 
@@ -282,7 +809,7 @@ export function App() {
             <li><strong>Process incorrect</strong> — the app shows the expected process name and provides step-by-step instructions to change your project&apos;s process in Azure DevOps Organization Settings. After changing the process, return here and click <strong>Validate connection</strong> again.</li>
           </ul>
 
-          <h3>Step 2: Upload a document</h3>
+          <h3>Upload a document</h3>
           <ol>
             <li>Upload a single <code>.txt</code> file (transcript or to-be process document).</li>
             <li>Confirm the file appears in the file list below the upload button.</li>
@@ -310,7 +837,47 @@ export function App() {
           </ul>
 
           <h3>Configuration</h3>
-          <p>Click <strong>Configuration</strong> in the header to update your Azure DevOps connection at any time. Use <strong>Save &amp; validate</strong> to change to a different project and re-run the process template check.</p>
+          <p>Click <strong>Configuration</strong> in the header to update your Azure DevOps connection at any time. Use <strong>Save & validate</strong> to change to a different project and re-run the process template check.</p>
+
+          <h3>Health Dashboard</h3>
+          <p>Click <strong>Health Dashboard</strong> in the header to view visual analytics across your backlog:</p>
+          <ul>
+            <li><strong>RAG donut</strong> — Red (&lt;40), Amber (40-70), Green (&gt;70) confidence distribution.</li>
+            <li><strong>Confidence histogram</strong> — story count per confidence bucket (0-20, 20-40, etc.).</li>
+            <li><strong>Effort breakdown</strong> — T-shirt size distribution (XS through XL).</li>
+            <li><strong>Coverage gaps</strong> — stories missing confidence, quality, effort, dependencies, or Definition of Done.</li>
+            <li><strong>Missing pieces heatmap</strong> — most common issues across stories, colour-coded by frequency.</li>
+            <li><strong>Dependency list</strong> — stories with dependsOn/blocks relationships.</li>
+          </ul>
+          <p>Use the <strong>Export CSV</strong> button to download the full backlog with all enrichment fields, or <strong>Stakeholder Summary</strong> for a high-level overview with epic/feature/story counts and top risks.</p>
+
+          <h3>Story Refinement</h3>
+          <p>Low-confidence stories can be improved using the built-in refinement assistant:</p>
+          <ol>
+            <li>After backlog creation, the <strong>Review dashboard</strong> shows stories with confidence below 60.</li>
+            <li>Click <strong>Refine</strong> next to any low-confidence story.</li>
+            <li>A modal shows suggested improvements: improved title (with action verbs), enhanced description (with user story format and NFRs), and better acceptance criteria (Gherkin format with edge cases).</li>
+            <li>Click <strong>Apply All</strong> to update the story in Azure DevOps, or use the granular buttons to apply only specific changes.</li>
+          </ol>
+
+          <h3>RRAID Log</h3>
+          <p>The <strong>RRAID Log</strong> (Risks, Requirements, Assumptions, Issues, Dependencies) helps you track project risks and dependencies:</p>
+          <ol>
+            <li>Click <strong>RRAID Log</strong> in the header.</li>
+            <li>Click <strong>Extract from Document</strong> to analyse an uploaded file for RRAID items using pattern-based detection.</li>
+            <li>Review the extracted items, filtered by category tabs (Risk, Requirement, Assumption, Issue, Dependency).</li>
+            <li>Select items using the checkboxes and click <strong>Create Selected in ADO</strong> to create them as Issue work items with RRAID tags.</li>
+            <li>Use <strong>Load from ADO</strong> to view RRAID items already created in your project.</li>
+          </ol>
+
+          <h3>Multi-file analysis</h3>
+          <p>Upload multiple documents and assign roles to each:</p>
+          <ul>
+            <li><strong>Process Doc</strong> — the primary To-Be process document (used as the main analysis source).</li>
+            <li><strong>Transcript</strong> — meeting transcripts or unstructured notes for additional context.</li>
+            <li><strong>Evidence</strong> — supporting evidence files cross-referenced during story generation.</li>
+          </ul>
+          <p>Assign roles using the dropdown next to each uploaded file. The primary Process Doc drives the backlog structure while additional files enrich the provenance and context.</p>
 
           <h3>Enrichment fields reference</h3>
           <p>Click <strong>Enrichment fields</strong> in the header to see the full list of 22 custom Azure DevOps fields used for backlog enrichment, including confidence scores, dependencies, quality metrics, effort estimates, and more.</p>
@@ -737,7 +1304,7 @@ export function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Document processing failed";
       logLine(`Document processing failed: ${message}`);
-      logLine("Please retry from Step 2.");
+      logLine("Please retry from Upload + analysis.");
       setError(message);
     } finally {
       stopProgressVisuals();
@@ -794,18 +1361,27 @@ export function App() {
 
   return (
     <div className="page">
+      {renderRefinementModal()}
       <header className="hero">
         <img src="/capgemini-logo-white.svg" alt="Capgemini" style={{ height: 54, marginBottom: 8, display: "block" }} />
         <h1>Backlog Assistant</h1>
         <p>Secure web interface for Azure DevOps backlog creation.</p>
         <div className="auth-row">
           <span>Signed in as {account?.username}</span>
-          {(showEnrichmentFieldsPage || showUserGuide) ? (
-            <button onClick={() => { setShowEnrichmentFieldsPage(false); setShowUserGuide(false); }}>Back to assistant</button>
+          {(showEnrichmentFieldsPage || showUserGuide || showHealthDashboard || showRRAIDLog) ? (
+            <button onClick={() => { setShowEnrichmentFieldsPage(false); setShowUserGuide(false); setShowHealthDashboard(false); setShowRRAIDLog(false); }}>Back to assistant</button>
           ) : (
             <>
+              <button onClick={() => { setShowHealthDashboard(true); void loadHealthData(); }}>Health Dashboard</button>
+              <button onClick={() => { setShowRRAIDLog(true); }}>RRAID Log</button>
               <button onClick={() => setShowEnrichmentFieldsPage(true)}>Enrichment fields</button>
               <button onClick={() => setShowConfigModal(true)}>Configuration</button>
+              <button onClick={() => {
+                setSelectedProcessType(null);
+                setProcessCheck(null);
+                setSetupState((prev) => prev ? { ...prev, isValidated: false } : prev);
+                logLine("Connection reset. Choose a process type to start again.");
+              }}>Reset connection</button>
             </>
           )}
           <button onClick={signOut}>Sign out</button>
@@ -836,12 +1412,26 @@ export function App() {
         </div>
       </header>
 
-      {showUserGuide ? renderUserGuide() : showEnrichmentFieldsPage ? renderEnrichmentFieldsPage() : !connectionReady ? (
+      {showHealthDashboard ? renderHealthDashboard() : showRRAIDLog ? renderRRAIDLog() : showUserGuide ? renderUserGuide() : showEnrichmentFieldsPage ? renderEnrichmentFieldsPage() : !connectionReady ? (
         <main className="wizard-layout">
           <section className="panel control-panel">
+            {hasSavedConnection() ? (
+              <div className="setup-card">
+                <h3>Saved connection found</h3>
+                <p>Confirm existing details or make changes before validation.</p>
+                <div className="setup-actions">
+                  <button disabled={validatingConnection} onClick={() => void validateConnection(true)}>Confirm & validate</button>
+                </div>
+                {renderInlineSpinner("validate-connection", "Validating connection...")}
+              </div>
+            ) : null}
+
+            <h2>Enter connection details</h2>
+            {renderConnectionFields()}
+
             <h2>Choose Process Type</h2>
             <p>Select the Azure DevOps process template your project should use.</p>
-            <div className="setup-actions" style={{ display: "flex", gap: 12 }}>
+            <div className="setup-actions" style={{ display: "flex", gap: 12, marginBottom: 12 }}>
               <button
                 onClick={() => setSelectedProcessType("agile-enrichment")}
                 style={{
@@ -864,31 +1454,16 @@ export function App() {
                   borderRadius: 8, cursor: "pointer"
                 }}
               >
-                Finance &amp; Operations
+                Finance & Operations
               </button>
             </div>
 
-            {selectedProcessType !== null && (
-              <>
-                {hasSavedConnection() ? (
-                  <div className="setup-card">
-                    <h3>Saved connection found</h3>
-                    <p>Confirm existing details or make changes before validation.</p>
-                    <div className="setup-actions">
-                      <button disabled={validatingConnection} onClick={() => void validateConnection(true)}>Confirm &amp; validate</button>
-                    </div>
-                    {renderInlineSpinner("validate-connection", "Validating connection...")}
-                  </div>
-                ) : null}
-
-                <h2>Step 1: Enter connection details</h2>
-                {renderConnectionFields()}
-                <div className="setup-actions">
-                  <button disabled={validatingConnection} onClick={() => void saveConnectionDetails()}>Save details</button>
-                  <button disabled={validatingConnection} onClick={() => void validateConnection(false)}>
-                    {validatingConnection ? "Validating connection..." : "Validate connection"}
-                  </button>
-                </div>
+            <div className="setup-actions">
+              <button disabled={validatingConnection || !selectedProcessType} onClick={() => void saveConnectionDetails()}>Save details</button>
+              <button disabled={validatingConnection || !selectedProcessType} onClick={() => void validateConnection(false)}>
+                {validatingConnection ? "Validating connection..." : "Validate connection"}
+              </button>
+            </div>
                 {actionLoading === "save-connection" && (
                   <div style={{ margin: "12px 0", padding: 14, borderRadius: 10, background: "#e3f2fd", display: "flex", alignItems: "center", gap: 12 }}>
                     <span className="spinner-dot" aria-hidden="true" style={{ width: 14, height: 14, flexShrink: 0 }} />
@@ -935,48 +1510,54 @@ export function App() {
                     ) : null}
                   </div>
                 )}
+
+            {/* Upload + analysis only shows when process is validated */}
+            {connectionReady && (
+              <>
+                <h2>Upload + analysis</h2>
+                <p>Connected platform: <strong>Azure DevOps</strong></p>
+                <p>Project: <strong>{configuredProject || "(from validated setup)"}</strong></p>
+
+                <label className="upload">
+                  Upload transcript / to-be process file (.txt)
+                  <input type="file" accept=".txt,text/plain" onChange={onUpload} disabled={busy} />
+                </label>
+                {renderInlineSpinner("upload", "Uploading file...")}
+
+                <label>
+                  Analysis mode
+                  <select value={analysisMode} onChange={(event) => setAnalysisMode(event.target.value as "process" | "themes")} disabled={busy}>
+                    <option value="process">to-be process</option>
+                    <option value="themes">transcript</option>
+                  </select>
+                </label>
+
+                <button disabled={busy} onClick={processUploadedDocument}>Create Backlog</button>
+                <button disabled={busy} onClick={deleteAllUploadedFiles}>Delete all uploaded files</button>
+                <button disabled={busy} onClick={() => void refreshFiles()}>Refresh files</button>
+                <div className="inline-action-row">
+                  {renderInlineSpinner("create-backlog", "Creating backlog...")}
+                  {renderInlineSpinner("delete-all", "Deleting uploaded files...")}
+                  {renderInlineSpinner("refresh", "Refreshing file list...")}
+                </div>
+
+                <ul className="file-list">
+                  {files.map((file) => (
+                    <li key={file.fileName}>
+                      <strong>{file.fileName}</strong>
+                      <span>{file.size} bytes</span>
+                    </li>
+                  ))}
+                </ul>
               </>
             )}
-
-            <h2>Step 2: Upload + analysis</h2>
-            <p>Connected platform: <strong>Azure DevOps</strong></p>
-            <p>Project: <strong>{configuredProject || "(from validated setup)"}</strong></p>
-
-            <label className="upload">
-              Upload transcript / to-be process file (.txt)
-              <input type="file" accept=".txt,text/plain" onChange={onUpload} disabled={busy} />
-            </label>
-            {renderInlineSpinner("upload", "Uploading file...")}
-
-            <label>
-              Analysis mode
-              <select value={analysisMode} onChange={(event) => setAnalysisMode(event.target.value as "process" | "themes")} disabled={busy}>
-                <option value="process">to-be process</option>
-                <option value="themes">transcript</option>
-              </select>
-            </label>
-
-            <button disabled={busy} onClick={processUploadedDocument}>Create Backlog</button>
-            <button disabled={busy} onClick={deleteAllUploadedFiles}>Delete all uploaded files</button>
-            <button disabled={busy} onClick={() => void refreshFiles()}>Refresh files</button>
-            <div className="inline-action-row">
-              {renderInlineSpinner("create-backlog", "Creating backlog...")}
-              {renderInlineSpinner("delete-all", "Deleting uploaded files...")}
-              {renderInlineSpinner("refresh", "Refreshing file list...")}
-            </div>
-
-            <ul className="file-list">
-              {files.map((file) => (
-                <li key={file.fileName}>
-                  <strong>{file.fileName}</strong>
-                  <span>{file.size} bytes</span>
-                </li>
-              ))}
-            </ul>
           </section>
 
           <section className="panel terminal-panel">
-            <h2>Execution Terminal</h2>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <h2 style={{ margin: 0 }}>Execution Terminal</h2>
+              <button onClick={() => setTerminalLines(["$ Terminal cleared."])} style={{ fontSize: "0.8rem", padding: "4px 10px" }}>Clear</button>
+            </div>
             <pre className="terminal-window" aria-readonly="true">{terminalLines.join("\n")}</pre>
             {renderLowConfidenceDashboard()}
           </section>
@@ -984,7 +1565,7 @@ export function App() {
       ) : (
         <main className="layout">
           <section className="panel control-panel">
-            <h2>Step 2: Upload + analysis</h2>
+            <h2>Upload + analysis</h2>
             <p>Connected platform: <strong>Azure DevOps</strong></p>
             <p>Project: <strong>{configuredProject}</strong></p>
 
@@ -1022,7 +1603,10 @@ export function App() {
           </section>
 
           <section className="panel terminal-panel">
-            <h2>Execution Terminal</h2>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <h2 style={{ margin: 0 }}>Execution Terminal</h2>
+              <button onClick={() => setTerminalLines(["$ Terminal cleared."])} style={{ fontSize: "0.8rem", padding: "4px 10px" }}>Clear</button>
+            </div>
             <pre className="terminal-window" aria-readonly="true">
               {terminalLines.join("\n")}
               {busy ? `\n$ Creating backlog ${spinnerGlyph}` : ""}
@@ -1065,17 +1649,31 @@ export function App() {
       {showConfigModal ? (
         <div className="modal-backdrop">
           <div className="modal-card">
-            <h3>Configuration</h3>
-            <p>Update your saved Azure DevOps connection profile.</p>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <h3>Configuration</h3>
+              <button
+                onClick={() => setShowConfigModal(false)}
+                style={{ background: "transparent", color: "#999", fontSize: "1.2rem", padding: "4px 8px", lineHeight: 1 }}
+                title="Close"
+              >&times;</button>
+            </div>
+            <p>Update your Azure DevOps connection details below.</p>
+            <div style={{ borderTop: "1px solid #e8e8e8", margin: "2px 0" }} />
             {renderConnectionFields()}
+            <div style={{ borderTop: "1px solid #e8e8e8", margin: "2px 0" }} />
             <div className="setup-actions">
               <button onClick={async () => { await saveConnectionDetails(); setShowConfigModal(false); }}>Save & close</button>
               <button disabled={validatingConnection} onClick={async () => { setShowConfigModal(false); await validateConnection(false); }}>
                 {validatingConnection ? "Validating..." : "Save & validate"}
               </button>
-              <button onClick={() => setShowConfigModal(false)}>Cancel</button>
+              <button onClick={() => setShowConfigModal(false)} style={{ background: "#f0f0f0", color: "#555" }}>Cancel</button>
             </div>
-            {renderInlineSpinner("save-connection", "Saving connection details...")}
+            {actionLoading === "save-connection" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span className="spinner-dot" aria-hidden="true" style={{ width: 12, height: 12, flexShrink: 0 }} />
+                <span style={{ fontSize: "0.88rem", color: "#0058ab" }}>Saving connection details...</span>
+              </div>
+            )}
           </div>
         </div>
       ) : null}
