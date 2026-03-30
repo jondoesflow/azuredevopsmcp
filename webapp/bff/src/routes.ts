@@ -253,10 +253,21 @@ export function createApiRouter(config: AppConfig) {
         res.status(400).json({ error: `Unknown process type: ${processType}` });
         return;
       }
-      const result = await mcpClient.executeTool("check_project_process", { project, expectedProcessName });
-      res.json(result);
+      const raw = await mcpClient.executeTool("ensure_process_on_project", { project, requiredProcessName: expectedProcessName }) as Record<string, unknown>;
+      // Map ensure_process_on_project response to ProcessCheckResult shape
+      const ensureStatus = raw.status as string | undefined;
+      const hasCorrectProcess = ensureStatus === "already_correct" || ensureStatus === "process_exists_assigned" || ensureStatus === "process_created_and_assigned";
+      res.json({
+        result: raw.result,
+        status: ensureStatus,
+        message: raw.message,
+        steps: raw.steps,
+        processName: (raw.processName as string) ?? expectedProcessName,
+        hasCorrectProcess,
+        expectedProcessName,
+      });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to check project process";
+      const message = error instanceof Error ? error.message : "Failed to check/provision project process";
       res.status(502).json({ error: message });
     }
   });

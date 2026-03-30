@@ -1,5 +1,7 @@
 import { Config } from "./config.js";
 import { logger } from "./logger.js";
+import { getProcessDefinition } from "./processDefinitions/index.js";
+import type { ProcessDefinition, ProcessFieldDefinition } from "./processDefinitions/types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -895,4 +897,325 @@ export async function ensureEnrichmentProcess(config: Config): Promise<void> {
     logger.error("Process migration failed", err instanceof Error ? err : new Error(msg));
     throw new Error(`Process migration failed: ${msg}. Cannot continue without the Enrichment process in the target org.`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Change an existing project's process template
+// ---------------------------------------------------------------------------
+
+export async function changeProjectProcess(
+  orgUrl: string,
+  pat: string,
+  projectName: string,
+  targetProcessId: string,
+): Promise<void> {
+  logger.info("Changing project process…", { projectName, targetProcessId });
+
+  // Get project ID first
+  const project = await adoFetch<{ id: string; name: string }>(
+    orgUrl,
+    pat,
+    `_apis/projects/${encodeURIComponent(projectName)}`,
+  );
+
+  // Update project capabilities to use new process
+  const updateResult = await adoFetch<{ id: string; status: string }>(
+    orgUrl,
+    pat,
+    `_apis/projects/${project.id}`,
+    "PATCH",
+    {
+      capabilities: {
+        processTemplate: {
+          templateTypeId: targetProcessId,
+        },
+      },
+    },
+  );
+
+  // If we got an operation ID, poll until complete
+  if (updateResult.id) {
+    logger.info("Project process change started, polling operation…", { operationId: updateResult.id });
+
+    const maxAttempts = 30;
+    const pollIntervalMs = 2000;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+
+      const status = await adoFetch<{ id: string; status: string }>(
+        orgUrl,
+        pat,
+        `_apis/operations/${updateResult.id}`,
+      );
+
+      logger.debug(`  Poll ${attempt}/${maxAttempts}: status=${status.status}`);
+
+      if (status.status === "succeeded") {
+        logger.info("Project process changed successfully", { projectName, targetProcessId });
+        return;
+      }
+
+      if (status.status === "failed" || status.status === "cancelled") {
+        throw new Error(`Project process change ${status.status}. Check Azure DevOps for details.`);
+      }
+    }
+
+    throw new Error(`Project process change timed out after ${(maxAttempts * pollIntervalMs) / 1000}s.`);
+  }
+
+  logger.info("Project process changed successfully (synchronous)", { projectName, targetProcessId });
+}
+
+// ---------------------------------------------------------------------------
+// Create a process from a ProcessDefinition (configurable, no source org)
+// ---------------------------------------------------------------------------
+
+export async function createProcessFromDefinition(
+  orgUrl: string,
+  pat: string,
+  definition: ProcessDefinition,
+): Promise<{ processId: string; processName: string }> {
+  logger.info("=== Process Creation from Definition: START ===", { name: definition.name });
+
+  // Find the parent process
+  const processList = await adoFetch<{ value: AdoProcess[] }>(orgUrl, pat, "_apis/work/processes");
+  const parentProcess = processList.value.find(
+    (p) => p.name.toLowerCase() === definition.parentProcess.toLowerCase(),
+  );
+  if (!parentProcess) {
+    throw new Error(
+      `Parent process "${definition.parentProcess}" not found. Available: ${processList.value.map((p) => p.name).join(", ")}`,
+    );
+  }
+
+  // Create the inherited process
+  logger.info(`Step 1/4: Creating process "${definition.name}"…`);
+  const createdProcess = await adoFetch<AdoProcess>(
+    orgUrl,
+    pat,
+    "_apis/work/processes",
+    "POST",
+    {
+      name: definition.name,
+      parentProcessTypeId: parentProcess.typeId,
+      description: definition.description,
+    },
+  );
+  logger.info(`  Process created: ${createdProcess.typeId}`);
+
+  // Create custom fields at org level (deduplicated)
+  logger.info("Step 2/4: Creating custom fields at org level…");
+  const createdFieldRefs = new Set<string>();
+
+  for (const field of definition.fields) {
+    if (createdFieldRefs.has(field.referenceName)) continue;
+
+    try {
+      await adoFetch(orgUrl, pat, "_apis/wit/fields", "POST", {
+        name: field.name,
+        referenceName: field.referenceName,
+        type: field.type,
+        description: field.description ?? "",
+        usage: "workItem",
+        readOnly: false,
+        isPicklist: false,
+      });
+      createdFieldRefs.add(field.referenceName);
+      logger.info(`  Field created: ${field.referenceName}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("already exists") || msg.includes("VS403261")) {
+        createdFieldRefs.add(field.referenceName);
+        logger.info(`  Field already exists: ${field.referenceName} (skipping)`);
+      } else {
+        throw new Error(`Failed to create field ${field.referenceName}: ${msg}`);
+      }
+    }
+  }
+
+  // Add fields to work item types
+  logger.info("Step 3/4: Adding fields to work item types…");
+  for (const witRef of definition.workItemTypes) {
+    for (const field of definition.fields) {
+      try {
+        await adoFetch(
+          orgUrl,
+          pat,
+          `_apis/work/processes/${createdProcess.typeId}/workitemtypes/${witRef}/fields`,
+          "POST",
+          {
+            referenceName: field.referenceName,
+            defaultValue: field.defaultValue ?? "",
+            required: field.required ?? false,
+            readOnly: false,
+          },
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("already exists") || msg.includes("VS403261")) {
+          logger.debug(`  Field ${field.referenceName} already on ${witRef} (skipping)`);
+        } else {
+          logger.warn(`  Could not add ${field.referenceName} to ${witRef}: ${msg}`);
+        }
+      }
+    }
+    logger.info(`  Added ${definition.fields.length} fields to ${witRef}`);
+  }
+
+  // Add layout pages if defined
+  if (definition.layoutPages?.length) {
+    logger.info("Step 4/4: Creating layout pages…");
+    for (const witRef of definition.workItemTypes) {
+      for (const page of definition.layoutPages) {
+        try {
+          const createdPage = await adoFetch<{ id: string }>(
+            orgUrl,
+            pat,
+            `_apis/work/processes/${createdProcess.typeId}/workitemtypes/${witRef}/layout/pages`,
+            "POST",
+            { label: page.label, order: 99, visible: true },
+          );
+
+          // Pages have one section by default; get it
+          const layout = await adoFetch<AdoLayout>(
+            orgUrl,
+            pat,
+            `_apis/work/processes/${createdProcess.typeId}/workitemtypes/${witRef}/layout`,
+          );
+          const pageObj = layout.pages.find((p) => p.id === createdPage.id);
+          const sectionId = pageObj?.sections?.[0]?.id;
+
+          if (sectionId) {
+            for (const group of page.groups) {
+              try {
+                const createdGroup = await adoFetch<{ id: string }>(
+                  orgUrl,
+                  pat,
+                  `_apis/work/processes/${createdProcess.typeId}/workitemtypes/${witRef}/layout/pages/${createdPage.id}/sections/${sectionId}/groups`,
+                  "POST",
+                  { label: group.label, visible: true },
+                );
+
+                for (const fieldRef of group.fields) {
+                  try {
+                    await adoFetch(
+                      orgUrl,
+                      pat,
+                      `_apis/work/processes/${createdProcess.typeId}/workitemtypes/${witRef}/layout/pages/${createdPage.id}/sections/${sectionId}/groups/${createdGroup.id}/controls`,
+                      "POST",
+                      { id: fieldRef, visible: true },
+                    );
+                  } catch {
+                    logger.debug(`    Could not add control ${fieldRef} to group "${group.label}"`);
+                  }
+                }
+              } catch {
+                logger.debug(`    Could not create group "${group.label}" for ${witRef}`);
+              }
+            }
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.warn(`  Could not create page "${page.label}" for ${witRef}: ${msg}`);
+        }
+      }
+    }
+  }
+
+  logger.info("=== Process Creation from Definition: COMPLETE ===", {
+    processName: definition.name,
+    processId: createdProcess.typeId,
+    fieldsCreated: createdFieldRefs.size,
+  });
+
+  return { processId: createdProcess.typeId, processName: definition.name };
+}
+
+// ---------------------------------------------------------------------------
+// Ensure process exists + project uses it — full orchestrator
+// ---------------------------------------------------------------------------
+
+export type EnsureProcessStatus =
+  | "already_correct"
+  | "process_exists_assigned"
+  | "process_created_and_assigned"
+  | "failed";
+
+export interface EnsureProcessResult {
+  status: EnsureProcessStatus;
+  message: string;
+  processName: string;
+  steps: string[];
+}
+
+export async function ensureProcessOnProject(
+  orgUrl: string,
+  pat: string,
+  projectName: string,
+  requiredProcessName: string,
+): Promise<EnsureProcessResult> {
+  const steps: string[] = [];
+  logger.info("=== Ensure Process on Project: START ===", { projectName, requiredProcessName });
+
+  // Step 1: Check current process
+  steps.push("Checking project process template…");
+  const processCheck = await checkProjectProcess(orgUrl, pat, projectName, requiredProcessName);
+
+  if (processCheck.hasCorrectProcess) {
+    steps.push(`Project already uses "${requiredProcessName}".`);
+    logger.info("Process is already correct — no action needed");
+    return {
+      status: "already_correct",
+      message: `Project "${projectName}" already uses the "${requiredProcessName}" process.`,
+      processName: requiredProcessName,
+      steps,
+    };
+  }
+
+  steps.push(`Project uses "${processCheck.processName}" — needs "${requiredProcessName}".`);
+
+  // Step 2: Check if the target process exists in the org
+  steps.push("Checking if target process exists in the organisation…");
+  const processList = await adoFetch<{
+    value: Array<AdoProcess & { projects?: Array<{ name: string; id: string }> }>;
+  }>(orgUrl, pat, "_apis/work/processes?$expand=projects");
+
+  let targetProcess = processList.value.find(
+    (p) => p.name.toLowerCase() === requiredProcessName.toLowerCase(),
+  );
+
+  let createdProcess = false;
+
+  if (targetProcess) {
+    steps.push(`Process "${requiredProcessName}" found in org.`);
+    logger.info("Target process exists in org", { processId: targetProcess.typeId });
+  } else {
+    // Step 3: Create the process from definition
+    steps.push(`Process "${requiredProcessName}" not found — creating it…`);
+    logger.info("Target process not found — creating from definition");
+
+    const definition = getProcessDefinition(requiredProcessName);
+    const result = await createProcessFromDefinition(orgUrl, pat, definition);
+    targetProcess = { typeId: result.processId, name: result.processName } as AdoProcess & { projects?: Array<{ name: string; id: string }> };
+    createdProcess = true;
+    steps.push(`Process "${requiredProcessName}" created successfully.`);
+  }
+
+  // Step 4: Change the project to use the target process
+  steps.push(`Assigning "${requiredProcessName}" to project "${projectName}"…`);
+  await changeProjectProcess(orgUrl, pat, projectName, targetProcess.typeId);
+  steps.push(`Project "${projectName}" now uses "${requiredProcessName}".`);
+
+  const status: EnsureProcessStatus = createdProcess
+    ? "process_created_and_assigned"
+    : "process_exists_assigned";
+
+  const message = createdProcess
+    ? `Created process "${requiredProcessName}" and assigned it to project "${projectName}".`
+    : `Assigned existing process "${requiredProcessName}" to project "${projectName}".`;
+
+  logger.info("=== Ensure Process on Project: COMPLETE ===", { status, message });
+
+  return { status, message, processName: requiredProcessName, steps };
 }

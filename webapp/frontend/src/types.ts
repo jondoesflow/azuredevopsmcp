@@ -124,6 +124,11 @@ export interface SetupConfigState {
 
 export interface ProcessCheckResult {
   result: string;
+  /** Provided by ensure_process_on_project */
+  status?: "already_correct" | "process_exists_assigned" | "process_created_and_assigned" | "failed";
+  message?: string;
+  steps?: string[];
+  /** Legacy fields from check_project_process — kept for backward compat */
   hasCorrectProcess: boolean;
   processName: string;
   expectedProcessName: string;
