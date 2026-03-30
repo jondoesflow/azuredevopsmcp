@@ -1158,6 +1158,7 @@ export async function ensureProcessOnProject(
   const steps: string[] = [];
   logger.info("=== Ensure Process on Project: START ===", { projectName, requiredProcessName });
 
+  try {
   // Step 1: Check current process
   steps.push("Checking project process template…");
   const processCheck = await checkProjectProcess(orgUrl, pat, projectName, requiredProcessName);
@@ -1218,4 +1219,16 @@ export async function ensureProcessOnProject(
   logger.info("=== Ensure Process on Project: COMPLETE ===", { status, message });
 
   return { status, message, processName: requiredProcessName, steps };
+
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    logger.error("Ensure process failed", err instanceof Error ? err : new Error(errMsg));
+    steps.push(`ERROR: ${errMsg}`);
+    return {
+      status: "failed" as EnsureProcessStatus,
+      message: errMsg,
+      processName: requiredProcessName,
+      steps,
+    };
+  }
 }
