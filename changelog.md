@@ -2,7 +2,26 @@
 
 This changelog tracks updates **from this point onward**, with a focus on MCP server code and deployment behavior.
 
-## 2026-03-28
+## 1.1.0 — 2026-03-30
+- **feat**: Auto-provision process templates — tool now creates the required process and assigns it to the project automatically if missing
+- **feat**: Configurable process definitions (`processDefinitions/`) — new process types added via config files, no code changes
+- **feat**: `ensure_process_on_project` MCP tool — orchestrates check, create, and assign in one step
+- **feat**: Progressive validation UI — shows step-by-step provisioning progress instead of manual ADO instructions
+- **feat**: Version and build timestamp displayed in header
+- **feat**: PDF, DOCX, XLSX file upload support with text extraction (mammoth, pdf-parse, xlsx)
+- **feat**: Duplicate detection on `create_backlog` — title-based dedup at all hierarchy levels
+- **feat**: Backlog Health Dashboard with RAG donut, confidence histogram, effort/quality breakdowns
+- **feat**: Story Refinement Assistant — before/after suggestions for low-confidence stories
+- **feat**: RRAID Log — extract Risks, Requirements, Assumptions, Issues, Dependencies from documents
+- **feat**: Multi-file analysis — upload multiple documents with role tagging
+- **feat**: Excel/CSV/JSON export of backlog data with enrichment fields
+- **feat**: In-app User Guide accessible from header (?) button
+- **fix**: DOCX text extraction now uses clean plaintext instead of base64 garble
+- **fix**: Rate limiter increased to 50 attempts for validation
+- **fix**: Config modal UI improvements — consistent button labelling, spacing
+- **infra**: All packages bumped to v1.1.0
+
+## 1.0.0 — 2026-03-28
 - **breaking**: Removed all Jira integration — ADO-only tool (−1,703 lines)
 - **feat**: Enrichment field check after connection validation
 - **feat**: Process migration UI in web app wizard

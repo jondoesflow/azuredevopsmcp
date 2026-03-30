@@ -1,3 +1,7 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+declare const __APP_VERSION__: string;
+declare const __BUILD_TIME__: string;
+
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { InteractionRequiredAuthError } from "@azure/msal-browser";
 import { useMsal } from "@azure/msal-react";
@@ -802,11 +806,19 @@ export function App() {
           </ol>
           <p>If a saved profile exists you will see <strong>Saved connection found</strong> with options to confirm or edit.</p>
 
-          <h3>Process template check</h3>
-          <p>After validation the app automatically checks that your project uses the expected process template for the selected process type.</p>
+          <h3>Automatic process provisioning</h3>
+          <p>After validation the app automatically checks that your project uses the correct process template. If it doesn&apos;t, the tool will <strong>automatically</strong>:</p>
+          <ol>
+            <li>Check if the required process exists in your Azure DevOps organisation.</li>
+            <li>If missing, <strong>create the process</strong> (with all enrichment custom fields, layout pages, and MoSCoW priority).</li>
+            <li><strong>Assign the process</strong> to your project.</li>
+          </ol>
+          <p>You will see a step-by-step progress indicator during provisioning. No manual changes in Azure DevOps are required.</p>
+          <p><strong>Note:</strong> Your PAT must have <em>Project &amp; Process</em> administrator permissions for auto-provisioning to work.</p>
+          <p>Currently supported process types:</p>
           <ul>
-            <li><strong>Process correct</strong> — you will see &ldquo;Process verified&rdquo; and can proceed.</li>
-            <li><strong>Process incorrect</strong> — the app shows the expected process name and provides step-by-step instructions to change your project&apos;s process in Azure DevOps Organization Settings. After changing the process, return here and click <strong>Validate connection</strong> again.</li>
+            <li><strong>Agile with Enrichment</strong> — Agile base + confidence, quality, effort, dependency, and MoSCoW fields</li>
+            <li><strong>Finance &amp; Operations</strong> — Agile base + F&amp;O-specific fields (configurable)</li>
           </ul>
 
           <h3>Upload a document</h3>
@@ -1381,7 +1393,10 @@ export function App() {
         </div>
 
         <h1 style={{ margin: "4px 0" }}>Backlog Assistant</h1>
-        <p style={{ margin: "0 0 12px 0", opacity: 0.8 }}>Secure web interface for Azure DevOps backlog creation.</p>
+        <p style={{ margin: "0 0 4px 0", opacity: 0.8 }}>Secure web interface for Azure DevOps backlog creation.</p>
+        <p style={{ margin: "0 0 12px 0", fontSize: 11, opacity: 0.5, fontFamily: "monospace" }}>
+          v{__APP_VERSION__} &middot; Built {new Date(__BUILD_TIME__).toLocaleString()}
+        </p>
 
         {/* Navigation buttons — uniform spacing */}
         <nav className="header-nav">
