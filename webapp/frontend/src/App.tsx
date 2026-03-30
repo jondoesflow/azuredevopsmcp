@@ -1475,28 +1475,39 @@ export function App() {
                     {processChecking ? (
                       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                         <span className="spinner-dot" aria-hidden="true" style={{ width: 14, height: 14, flexShrink: 0 }} />
-                        <span style={{ fontWeight: 600, fontSize: "1rem" }}>Checking project process template...</span>
+                        <span style={{ fontWeight: 600, fontSize: "1rem" }}>Checking &amp; provisioning process template&hellip;</span>
                       </div>
                     ) : processCheck?.hasCorrectProcess ? (
-                      <p style={{ margin: 0, color: "#2e7d32", fontWeight: 600, fontSize: "1rem" }}>Process verified: using &ldquo;{processCheck.processName}&rdquo;.</p>
+                      <div>
+                        <p style={{ margin: 0, color: "#2e7d32", fontWeight: 600, fontSize: "1rem" }}>
+                          {processCheck.status === "already_correct"
+                            ? <>Process verified: using &ldquo;{processCheck.processName}&rdquo;.</>
+                            : processCheck.status === "process_created_and_assigned"
+                              ? <>Process &ldquo;{processCheck.processName}&rdquo; created and assigned to project.</>
+                              : processCheck.status === "process_exists_assigned"
+                                ? <>Process &ldquo;{processCheck.processName}&rdquo; assigned to project.</>
+                                : <>Process ready: &ldquo;{processCheck.processName}&rdquo;.</>}
+                        </p>
+                        {processCheck.steps && processCheck.steps.length > 1 && (
+                          <details style={{ marginTop: 8 }}>
+                            <summary style={{ cursor: "pointer", fontSize: "0.85rem", color: "#666" }}>Provisioning steps</summary>
+                            <ul style={{ margin: "4px 0 0", paddingLeft: 20, fontSize: "0.85rem", color: "#555" }}>
+                              {processCheck.steps.map((s, i) => <li key={i}>{s}</li>)}
+                            </ul>
+                          </details>
+                        )}
+                      </div>
                     ) : processCheck ? (
                       <div>
-                        <h3 style={{ margin: "0 0 8px", color: "#e65100" }}>Incorrect Process Template</h3>
-                        <p style={{ margin: "0 0 12px" }}>
-                          Your project is using the &ldquo;{processCheck.processName}&rdquo; process, but the expected process is &ldquo;{processCheck.expectedProcessName}&rdquo;.
-                        </p>
-                        <p style={{ margin: "0 0 12px" }}>
-                          To fix this, change your project&apos;s process in Azure DevOps:
-                        </p>
-                        <ol style={{ margin: "0 0 12px", paddingLeft: 20 }}>
-                          <li>Go to <strong>Organization Settings</strong> &gt; <strong>Process</strong></li>
-                          <li>Find your current process (&ldquo;{processCheck.processName}&rdquo;) and open it</li>
-                          <li>Select the <strong>Projects</strong> tab</li>
-                          <li>Click the <strong>&hellip;</strong> menu next to your project and select <strong>Change process</strong></li>
-                          <li>Choose the &ldquo;{processCheck.expectedProcessName}&rdquo; process</li>
-                        </ol>
-                        <p style={{ margin: 0 }}>
-                          After changing the process, return here and click <strong>Validate connection</strong> again.
+                        <h3 style={{ margin: "0 0 8px", color: "#c62828" }}>Process Provisioning Failed</h3>
+                        <p style={{ margin: "0 0 8px" }}>{processCheck.message ?? "Could not set up the required process on your project."}</p>
+                        {processCheck.steps && processCheck.steps.length > 0 && (
+                          <ul style={{ margin: "4px 0 0", paddingLeft: 20, fontSize: "0.85rem", color: "#555" }}>
+                            {processCheck.steps.map((s, i) => <li key={i}>{s}</li>)}
+                          </ul>
+                        )}
+                        <p style={{ margin: "8px 0 0", fontSize: "0.9rem" }}>
+                          Please check your PAT has the required permissions (Project &amp; Process admin) and try again.
                         </p>
                       </div>
                     ) : null}

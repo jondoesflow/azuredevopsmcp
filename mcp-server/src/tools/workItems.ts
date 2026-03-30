@@ -1,6 +1,6 @@
 import { AzureDevOpsClient } from "../azureDevOpsClient.js";
 import { logger } from "../logger.js";
-import { checkProjectProcess, checkEnrichmentProcessExists, migrateProcess, createProjectWithProcess } from "../processMigration.js";
+import { checkProjectProcess, checkEnrichmentProcessExists, migrateProcess, createProjectWithProcess, ensureProcessOnProject } from "../processMigration.js";
 import { enrichGeneratedWorkItems } from "./enrichment/orchestrator.js";
 import {
   EnrichmentFlags,
@@ -995,6 +995,25 @@ export const workItemTools: Tool[] = [
     },
   },
   {
+    name: "ensure_process_on_project",
+    description:
+      "Ensures the target Azure DevOps project uses the required process. If the process doesn't exist in the org, it creates it from a built-in definition. If the project uses a different process, it changes the project to use the required one. Returns step-by-step progress.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        project: {
+          type: "string",
+          description: "Azure DevOps project name.",
+        },
+        requiredProcessName: {
+          type: "string",
+          description: "Required process template name (e.g. 'Agile with Enrichment', 'Finance and Operations').",
+        },
+      },
+      required: ["project", "requiredProcessName"],
+    },
+  },
+  {
     name: "migrate_enrichment_process",
     description:
       "Migrate a process template (with enrichment custom fields, states, rules, and layout) from a source Azure DevOps org to the target org, then create a new project using that process.",
@@ -1145,6 +1164,7 @@ interface ToolInput {
   previewFileName?: string;
   reviewOnly?: boolean;
   expectedProcessName?: string;
+  requiredProcessName?: string;
   sourceOrgUrl?: string;
   sourceProject?: string;
   sourceProcessName?: string;
@@ -2901,6 +2921,26 @@ export async function handleWorkItemTool(
           hasCorrectProcess: result.hasCorrectProcess,
           processName: result.processName,
           expectedProcessName: result.expectedProcessName,
+        });
+      }
+
+      case "ensure_process_on_project": {
+        const client = requireAzureClient(clients);
+        if (!input.requiredProcessName) {
+          throw new Error("requiredProcessName is required.");
+        }
+        const ensureResult = await ensureProcessOnProject(
+          client.getOrgUrl(),
+          client.getPat(),
+          input.project,
+          input.requiredProcessName,
+        );
+        return JSON.stringify({
+          result: "success",
+          status: ensureResult.status,
+          message: ensureResult.message,
+          processName: ensureResult.processName,
+          steps: ensureResult.steps,
         });
       }
 
