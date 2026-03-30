@@ -268,7 +268,16 @@ export function createApiRouter(config: AppConfig) {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to check/provision project process";
-      res.status(502).json({ error: message });
+      // Return structured error so frontend can display it properly
+      res.json({
+        result: "error",
+        status: "failed",
+        message,
+        steps: [`ERROR: ${message}`],
+        processName: "",
+        hasCorrectProcess: false,
+        expectedProcessName: "",
+      });
     }
   });
 
