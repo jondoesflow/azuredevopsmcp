@@ -4,23 +4,27 @@
 
 An MCP (Model Context Protocol) server that integrates with **Azure DevOps** to automate backlog creation from business documents. Users upload documents (PDF/DOCX/XLSX/text), the system analyses them, and generates a full work item hierarchy: **Epics > Features > User Stories > Tasks** — enriched with confidence scores, dependency detection, and quality assessments.
 
-Consumed by **Microsoft Copilot Studio** (Teams) and an **internal web app** (for non-Teams users).
+Consumed via an **internal web application** (React SPA) that connects directly to the MCP Server hosted in Azure.
 
 ---
 
 ## Architecture at a Glance
 
 ```
-Copilot Studio (Teams)          Web App (React SPA)
-        |                              |
-        v                              v
-   MCP Server (Express)         BFF (Express API)
-   22 MCP Tools                  14+ REST endpoints
-        |                              |
-        +--------- both call ---------+
-                      |
-              Azure DevOps REST API
-         (Work Items, Process Templates, Projects)
+   Web App (React SPA)
+         |
+         v
+   BFF (Express API)
+   14+ REST endpoints
+   Entra ID auth
+         |
+         v
+   MCP Server (Express, Azure-hosted)
+   22 MCP Tools
+         |
+         v
+   Azure DevOps REST API
+   (Work Items, Process Templates, Projects)
 ```
 
 **Stack:** TypeScript, Node.js 20, Express 5, React 18, Vite, MSAL/Entra ID auth, Docker

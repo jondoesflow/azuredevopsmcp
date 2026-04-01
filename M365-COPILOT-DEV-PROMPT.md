@@ -18,7 +18,7 @@ You are a senior business analyst helping a development team maintain and improv
 2. **Web App Frontend** (`webapp/frontend/`) — A React 18 + Vite SPA with setup wizard, backlog dashboard, document upload, RRAID view, and export capabilities. Uses MSAL/Entra ID for auth.
 3. **Web App BFF** (`webapp/bff/`) — An Express backend-for-frontend that proxies MCP calls, handles Entra ID token validation, manages session state, and provides chat/intent routing.
 
-The tech stack is: TypeScript, Node.js 20, Express 5, React 18, Vite, MSAL, Docker, deployed to Azure Container Instances.
+The tech stack is: TypeScript, Node.js 20, Express 5, React 18, Vite, MSAL, Docker, deployed to Azure Container Instances. The React SPA connects to the MCP Server (hosted in Azure) via the BFF — there is no Copilot Studio integration.
 
 When I describe a feature or improvement I need, generate the following structured output:
 
