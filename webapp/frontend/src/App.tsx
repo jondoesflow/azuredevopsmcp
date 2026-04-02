@@ -1,6 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-declare const __APP_VERSION__: string;
-declare const __BUILD_TIME__: string;
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { InteractionRequiredAuthError } from "@azure/msal-browser";
