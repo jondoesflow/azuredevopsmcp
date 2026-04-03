@@ -3238,3 +3238,57 @@ export async function handleWorkItemTool(
     throw new Error(`Operation failed.`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Test-only exports — DO NOT USE IN PRODUCTION CODE
+// Exposed to allow unit testing of private utility functions.
+// ---------------------------------------------------------------------------
+export const _testExports = {
+  stripHtml,
+  parseBooleanEnv,
+  getEnrichmentFlags,
+  truncate,
+  toSingleLine,
+  escapeRegExp,
+  escapeHtml,
+  assessRubrics,
+  buildRubricAcceptanceCriteria,
+  selectBestExcerpt,
+  buildProvenanceHtml,
+  buildProvenanceText,
+  appendAcceptanceCriteriaBlock,
+  tryDecodeBase64,
+  extractTextFromBinary,
+  resolveContentUrl,
+  cleanExtractedText,
+  splitIntoSentencesAndLines,
+  isLikelyProcessStep,
+  extractRoleFromStep,
+  extractEvidenceTerms,
+  normaliseTitle,
+  findWorkItemByTitle,
+  detectPersonaFromTranscript,
+  getBestPersona,
+  toPreviewItemId,
+  buildGherkinCriteria,
+  buildStoryDescription,
+  buildEpicDescription,
+  buildFeatureDescription,
+  buildProcessEpicDescription,
+  buildProcessFeatureDescription,
+  buildPlaceholderStoryDescription,
+  selectEvidenceSnippets,
+  appendUnique,
+  toEnrichmentLabelToken,
+  buildEnrichmentSummaryText,
+  buildEnrichmentSummaryHtml,
+  toHtmlList,
+  buildAdoEnrichmentCustomFields,
+  applyAdoEnrichment,
+  parseStoredAnalysis,
+  parseStoredPreview,
+  scanSectionForThemes,
+  parseAnalysisMode,
+  getPreviewStoreKey,
+  findEnrichmentForTitle,
+};

@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js",
+    "coverage": "jest --coverage",
     "watch": "tsc --watch",
     "debug": "node --inspect-brk dist/index.js",
     "test": "jest",

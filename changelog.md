@@ -19,6 +19,7 @@ This changelog tracks updates **from this point onward**, with a focus on MCP se
 - **fix**: DOCX text extraction now uses clean plaintext instead of base64 garble
 - **fix**: Rate limiter increased to 50 attempts for validation
 - **fix**: Config modal UI improvements — consistent button labelling, spacing
+- **test**: Expanded unit and integration test coverage for `workItems.ts` core logic, handlers, and utility wrappers (achieved 91.15% coverage)
 - **infra**: All packages bumped to v1.1.0
 
 ## 1.0.0 — 2026-03-28

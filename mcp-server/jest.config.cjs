@@ -8,4 +8,9 @@ module.exports = {
     // Our TS source uses ESM imports with explicit .js extensions.
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
+  collectCoverageFrom: [
+    'src/**/*.ts',
+    '!src/**/*.spec.ts',
+    '!src/**/index.ts',
+  ],
 };
