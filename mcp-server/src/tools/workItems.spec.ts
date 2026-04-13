@@ -1707,7 +1707,7 @@ describe("workItems tools - create_backlog (themes mode)", () => {
     const raw = await handleWorkItemTool(
       { azureDevOpsClient: mockClient } as any,
       "create_backlog",
-      { project: "TestProj", fileName: "area.txt", areaPath: "TestProj\\Team A" } as any
+      { project: "TestProj", fileName: "area.txt", areaPath: String.raw`TestProj\Team A` } as any
     );
 
     const parsed = JSON.parse(raw) as { result: string };
@@ -1715,7 +1715,7 @@ describe("workItems tools - create_backlog (themes mode)", () => {
     // Verify createWorkItem was called with the custom areaPath
     const calls = mockClient.createWorkItem.mock.calls as any[];
     if (calls.length > 0) {
-      const hasAreaPath = calls.some((c: any) => c[0]?.areaPath === "TestProj\\Team A");
+      const hasAreaPath = calls.some((c: any) => c[0]?.areaPath === String.raw`TestProj\Team A`);
       expect(hasAreaPath).toBe(true);
     }
   });
