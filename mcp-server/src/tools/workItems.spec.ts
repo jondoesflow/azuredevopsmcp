@@ -245,8 +245,6 @@ describe("workItems tools - Document Analysis", () => {
       fileName: "analysis2.txt",
       analysisMode: "themes",
     });
-
-    const parsed = JSON.parse(raw) as { result?: string };
     // If analysis was successful, check cache
     if (!raw.includes("error")) {
       const cached = getFileStore().get("__analysis_analysis2.txt");
