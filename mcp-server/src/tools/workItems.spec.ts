@@ -379,7 +379,6 @@ describe("workItems tools - Backlog Operations", () => {
       storyMaturity: "placeholder",
     });
 
-    // This may error if analysis isn't available, which is expected
     const parsed = JSON.parse(raw) as { result?: string; error?: string };
     expect(parsed.result || parsed.error).toBeDefined();
   });
@@ -397,12 +396,11 @@ describe("workItems tools - Backlog Operations", () => {
       storyMaturity: "detailed",
     });
 
-    // This may error if analysis isn't available, which is expected
     const parsed = JSON.parse(raw) as { result?: string; error?: string };
     expect(parsed.result || parsed.error).toBeDefined();
   });
 
-//   test("preview_backlog with process-first analysis", async () => {
+
 //     const processDoc = `
 // Stage: Order Processing
 // 1. Create order with validation
@@ -1154,31 +1152,6 @@ describe("workItems tools - Update & Configuration Operations", () => {
     const parsed = JSON.parse(raw);
     expect(parsed.result || parsed.error).toBeDefined();
   });
-
-  // test("migrate_enrichment_process migrates process between orgs", async () => {
-  //   const { migrateProcess } = require("../processMigration.js");
-  //   migrateProcess.mockResolvedValue({
-  //     success: true,
-  //     targetProject: "TargetProject",
-  //     message: "Process migration completed successfully",
-  //   });
-
-  //   const raw = await handleWorkItemTool(
-  //     { azureDevOpsClient: mockClient },
-  //     "migrate_enrichment_process",
-  //     {
-  //       project: "TestProj",
-  //       sourceOrgUrl: "https://dev.azure.com/sourceOrg",
-  //       sourceProject: "SourceProject",
-  //       sourceProcessName: "Agile with Enrichment",
-  //       sourcePat: "source-pat-token",
-  //       newProjectName: "TargetProject",
-  //     }
-  //   );
-
-  //   const parsed = JSON.parse(raw);
-  //   expect(parsed.result || parsed.error).toBeDefined();
-  // });
 });
 
 describe("workItems tools - Health & Refinement Operations", () => {
@@ -1401,79 +1374,6 @@ describe("workItems tools - Integration Scenarios", () => {
     expect(Array.isArray(filesParsed.files)).toBe(true);
   });
 
-  // test("backlog management workflow with analysis, preview, and theme details", async () => {
-  //   const upload = await handleWorkItemTool({}, "process_transcript", {
-  //     project: "TestProj",
-  //     fileName: "backlog.txt",
-  //     fileContent: "Need user authentication, admin panel, and reporting dashboard with security controls.",
-  //   });
-
-  //   expect(JSON.parse(upload).result).toBe("success");
-
-  //   const analysis = await handleWorkItemTool({}, "analyse_document", {
-  //     project: "TestProj",
-  //     fileName: "backlog.txt",
-  //     analysisMode: "themes",
-  //   });
-
-  //   const analysisParsed = JSON.parse(analysis);
-  //   if (analysisParsed.result === "success" && analysisParsed.themes) {
-  //     const themeNames = Object.keys(analysisParsed.themes);
-  //     if (themeNames.length > 0) {
-  //       const themeDetail = await handleWorkItemTool({}, "get_theme_details", {
-  //         project: "TestProj",
-  //         fileName: "backlog.txt",
-  //         themeName: themeNames[0],
-  //       });
-
-  //       const themeDetailParsed = JSON.parse(themeDetail);
-  //       expect(themeDetailParsed.result || themeDetailParsed.error).toBeDefined();
-  //     }
-  //   }
-
-  //   const preview = await handleWorkItemTool({}, "preview_backlog", {
-  //     project: "TestProj",
-  //     fileName: "backlog.txt",
-  //     storyMaturity: "placeholder",
-  //   });
-
-  //   const previewParsed = JSON.parse(preview);
-  //   expect(previewParsed.result || previewParsed.error).toBeDefined();
-  // });
-
-  // test("complete backlog creation workflow with enrichment and RRAID", async () => {
-  //   await handleWorkItemTool({}, "process_transcript", {
-  //     project: "TestProj",
-  //     fileName: "complete.txt",
-  //     fileContent: "Implement OAuth2 for authentication, add audit logging, ensure compliance with GDPR.",
-  //   });
-
-  //   const analysis = await handleWorkItemTool({}, "analyse_document", {
-  //     project: "TestProj",
-  //     fileName: "complete.txt",
-  //     analysisMode: "themes",
-  //   });
-
-  //   const analysisParsed = JSON.parse(analysis);
-  //   if (analysisParsed.result === "success") {
-  //     const preview = await handleWorkItemTool({}, "preview_backlog", {
-  //       project: "TestProj",
-  //       fileName: "complete.txt",
-  //       storyMaturity: "detailed",
-  //     });
-
-  //     const previewParsed = JSON.parse(preview);
-  //     expect(previewParsed.result || previewParsed.error).toBeDefined();
-
-  //     const rraid = await handleWorkItemTool({}, "extract_rraid", {
-  //       project: "TestProj",
-  //       fileName: "complete.txt",
-  //     });
-
-  //     const rraidParsed = JSON.parse(rraid);
-  //     expect(rraidParsed.result || rraidParsed.error).toBeDefined();
-  //   }
-  // });
 });
 
 // ============================================================================
