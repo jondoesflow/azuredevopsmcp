@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, jest } from "@jest/globals";
+import { beforeEach, describe, expect, test, jest } from "@jest/globalThiss";
 
 import { getFileStore, handleWorkItemTool, _testExports } from "./workItems.js";
 const {
@@ -1327,9 +1327,9 @@ describe("workItems tools - process_transcript extended paths", () => {
   });
 
   test("contentUrl: returns error when http fetch fails (non-ok response)", async () => {
-    // Mock global fetch to return a non-ok response
-    const originalFetch = global.fetch;
-    global.fetch = (jest.fn() as any).mockResolvedValue({ ok: false, status: 404 });
+    // Mock globalThis fetch to return a non-ok response
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (jest.fn() as any).mockResolvedValue({ ok: false, status: 404 });
 
     const raw = await handleWorkItemTool({}, "process_transcript", {
       project: "TestProj",
@@ -1341,12 +1341,12 @@ describe("workItems tools - process_transcript extended paths", () => {
     expect(parsed.result).toBe("error");
     expect(parsed.message).toContain("404");
 
-    global.fetch = originalFetch;
+    globalThis.fetch = originalFetch;
   });
 
   test("contentUrl: returns error when http fetch throws a network error", async () => {
-    const originalFetch = global.fetch;
-    global.fetch = (jest.fn() as any).mockRejectedValue(new Error("Network failure"));
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (jest.fn() as any).mockRejectedValue(new Error("Network failure"));
 
     const raw = await handleWorkItemTool({}, "process_transcript", {
       project: "TestProj",
@@ -1358,7 +1358,7 @@ describe("workItems tools - process_transcript extended paths", () => {
     expect(parsed.result).toBe("error");
     expect(parsed.message).toContain("Network failure");
 
-    global.fetch = originalFetch;
+    globalThis.fetch = originalFetch;
   });
 
   test("returns error when neither fileContent nor contentUrl is provided and file does not exist", async () => {
