@@ -1237,22 +1237,10 @@ describe("workItems tools - RRAID Operations", () => {
 });
 
 describe("workItems tools - Integration Scenarios", () => {
-  let mockClient: any;
 
   beforeEach(() => {
     getFileStore().clear();
     jest.clearAllMocks();
-
-    mockClient = {
-      // @ts-expect-error - jest.fn typing
-      listUserStories: jest.fn().mockResolvedValue([]),
-      // @ts-expect-error - jest.fn typing
-      createWorkItem: jest.fn().mockResolvedValue({ id: 100, fields: { "System.Title": "Created" } }),
-      // @ts-expect-error - jest.fn typing
-      updateWorkItem: jest.fn().mockResolvedValue({ id: 100, fields: { "System.State": "Active" } }),
-      // @ts-expect-error - jest.fn typing
-      addRelation: jest.fn().mockResolvedValue(true),
-    };
   });
 
   test("complete document analysis workflow from upload to analysis", async () => {
@@ -2090,7 +2078,7 @@ describe("workItems tools - persistAdoDependencies (via create_backlog)", () => 
       expect(migrateProcess).toHaveBeenCalled();
       expect(createProjectWithProcess).toHaveBeenCalled();
       
-      const parsed = JSON.parse(result as string);
+      const parsed = JSON.parse(result);
       expect(parsed.result).toBe("success");
       expect(parsed.boardUrl).toContain("NewProject");
     });
