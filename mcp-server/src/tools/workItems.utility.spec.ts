@@ -136,11 +136,11 @@ describe("toSingleLine", () => {
 
 describe("escapeRegExp", () => {
   test("escapes special regex characters", () => {
-    expect(escapeRegExp("a.b*c+d?")).toBe("a\\.b\\*c\\+d\\?");
+    expect(escapeRegExp("a.b*c+d?")).toBe(String.raw`a\.b\*c\+d\\?`);
   });
 
   test("escapes brackets and braces", () => {
-    expect(escapeRegExp("(a){1}[b]")).toBe("\\(a\\)\\{1\\}\\[b\\]");
+    expect(escapeRegExp("(a){1}[b]")).toBe(String.raw`\\(a\\)\\{1\\}\\[b\\]`);
   });
 
   test("leaves plain alphanumeric strings unchanged", () => {
@@ -148,7 +148,7 @@ describe("escapeRegExp", () => {
   });
 
   test("escapes pipe and caret", () => {
-    expect(escapeRegExp("a|b^c$")).toBe("a\\|b\\^c\\$");
+    expect(escapeRegExp("a|b^c$")).toBe(String.raw`a\\|b\\^c\\$`);
   });
 });
 
