@@ -960,7 +960,7 @@ describe("workItems tools - Create Operations (with mocked ADO client)", () => {
   });
 
   test("add_acceptance_criteria adds criteria to story", async () => {
-    (mockClient.addAcceptanceCriteria as any) = (jest.fn() as any).mockResolvedValueOnce({
+    (mockClient.addAcceptanceCriteria) = (jest.fn()).mockResolvedValueOnce({
       id: 4,
       fields: { "System.Description": "Updated with criteria" },
     });
@@ -2020,7 +2020,7 @@ describe("workItems tools - persistAdoDependencies (via create_backlog)", () => 
 
     // addRelation should have been called for the dependency link
     expect(mockClient.addRelation).toHaveBeenCalled();
-    const relationCall = (mockClient.addRelation.mock.calls[0] as any[])[0] as any;
+    const relationCall = (mockClient.addRelation.mock.calls[0])[0];
     expect(relationCall.relationType).toBe("System.LinkTypes.Related");
   });
 });
@@ -2126,7 +2126,7 @@ describe("workItems tools - persistAdoDependencies (via create_backlog)", () => 
         "get_backlog_health",
         { project: "Proj", epicId: 1 } as any
       );
-      const parsed = JSON.parse(result as string);
+      const parsed = JSON.parse(result);
       expect(parsed.totalStories).toBe(4);
       expect(parsed.ragDistribution.green).toBe(1); // 80 -> green
       expect(parsed.ragDistribution.amber).toBe(1); // 60 -> amber
