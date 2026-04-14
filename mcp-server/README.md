@@ -32,6 +32,14 @@ npm start
 ```
 
 Test: `curl http://localhost:3000/health`
+4
+## Testing
+
+Run unit tests:
+
+```bash
+npm test
+```
 
 ## Server Endpoints
 
