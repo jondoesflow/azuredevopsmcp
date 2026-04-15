@@ -41,6 +41,20 @@ Run unit tests:
 npm test
 ```
 
+Run focused enrichment coverage suites:
+
+```bash
+npx jest --coverage \
+  src/tools/enrichment/stages.spec.ts \
+  src/tools/enrichment/orchestrator.spec.ts \
+  src/tools/enrichment/refinement.spec.ts \
+  src/tools/rraid.spec.ts \
+  src/processDefinitions/index.spec.ts
+```
+
+These suites validate the enrichment heuristics, orchestration/caching behavior,
+story refinement helpers, RRAID extraction/matching, and process definition registry lookups.
+
 ## Server Endpoints
 
 | Endpoint | Method | Description |
