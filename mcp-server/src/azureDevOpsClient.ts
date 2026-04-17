@@ -54,6 +54,15 @@ export interface WorkItemRelationInput {
   relationType?: string;
 }
 
+function sanitizeHtmlField(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 export class AzureDevOpsClient {
   private readonly webApi: WebApi;
   private readonly orgUrl: string;
@@ -108,7 +117,7 @@ export class AzureDevOpsClient {
         patchDocument.push({
           op: Operation.Add,
           path: "/fields/System.Description",
-          value: input.description,
+          value: sanitizeHtmlField(input.description),
         });
       }
 
@@ -159,7 +168,7 @@ export class AzureDevOpsClient {
 
       // Add acceptance criteria for user stories
       if (input.witType === "User Story" && input.acceptanceCriteria && input.acceptanceCriteria.length > 0) {
-        const criteriaText = input.acceptanceCriteria.map((c) => `${c}<br/>`).join("");
+        const criteriaText = input.acceptanceCriteria.map((c) => `${sanitizeHtmlField(c)}<br/>`).join("");
         patchDocument.push({
           op: Operation.Add,
           path: "/fields/Microsoft.VSTS.Common.AcceptanceCriteria",
@@ -361,7 +370,7 @@ export class AzureDevOpsClient {
         patchDocument.push({
           op: Operation.Replace,
           path: "/fields/System.Description",
-          value: update.description,
+          value: sanitizeHtmlField(update.description),
         });
       }
 
@@ -382,7 +391,7 @@ export class AzureDevOpsClient {
       }
 
       if (update.acceptanceCriteria && update.acceptanceCriteria.length > 0) {
-        const criteriaText = update.acceptanceCriteria.map((c) => `${c}<br/>`).join("");
+        const criteriaText = update.acceptanceCriteria.map((c) => `${sanitizeHtmlField(c)}<br/>`).join("");
         patchDocument.push({
           op: Operation.Replace,
           path: "/fields/Microsoft.VSTS.Common.AcceptanceCriteria",

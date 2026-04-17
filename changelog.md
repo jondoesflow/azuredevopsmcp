@@ -2,6 +2,22 @@
 
 This changelog tracks updates **from this point onward**, with a focus on MCP server code and deployment behavior.
 
+## 2026-04-17
+
+### Security hardening
+- **fix(bff)**: Added non-dev startup guard to block `AUTH_MODE=off` outside development.
+- **fix(bff)**: Added non-dev startup guard requiring `ENTRA_ALLOWED_GROUP_IDS` when auth mode is enforced.
+- **fix(bff)**: Added non-dev startup guard requiring a non-default `SETUP_ENCRYPTION_KEY`.
+- **fix(bff)**: Enforced HTTPS-only requests outside development (proxy-aware).
+- **fix(mcp)**: Removed query-string API key authentication (`?api_key=...`); headers only.
+- **fix(mcp)**: Added MCP/SSE endpoint rate limiting in addition to upload throttling.
+- **fix(mcp)**: Enforced HTTPS-only requests outside development (proxy-aware).
+- **fix(mcp)**: Sanitized/encoded description and acceptance-criteria fields before Azure DevOps writes.
+- **fix(mcp)**: Added PAT/API-key redaction in logger output.
+- **fix(container)**: Switched MCP container runtime to non-root user and non-privileged port `8080`.
+- **docs**: Updated deployment/setup docs with port `8080`, PAT minimum-scope policy, and TLS requirements.
+- **docs**: Added `security_issues.md` with full item-by-item status and external follow-up actions.
+
 ## 1.1.0 — 2026-03-30
 - **feat**: Auto-provision process templates — tool now creates the required process and assigns it to the project automatically if missing
 - **feat**: Configurable process definitions (`processDefinitions/`) — new process types added via config files, no code changes

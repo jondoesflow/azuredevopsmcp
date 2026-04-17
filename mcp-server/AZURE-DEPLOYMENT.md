@@ -105,7 +105,7 @@ az container create `
   --image <your-registry-name>.azurecr.io/mcp-azure-devops:v1 `
   --cpu 1 `
   --memory 1 `
-  --ports 80 `
+  --ports 8080 `
   --ip-address Public `
   --os-type Linux `
   --dns-name-label <your-dns-label> `
@@ -116,7 +116,8 @@ az container create `
     AZURE_DEVOPS_ORG=<your-ado-org> `
     AZURE_DEVOPS_PAT=<your-pat-token> `
     AZURE_DEVOPS_URL=https://dev.azure.com/<your-ado-org> `
-    PORT=80 `
+    PORT=8080 `
+    AZURE_DEVOPS_PAT_SCOPE_POLICY=work-items-read-write `
     TRANSPORT_MODE=http
 ```
 
@@ -213,7 +214,7 @@ az container create `
   --resource-group mcp-server-rg `
   --name mcp-azure-devops `
   --image <your-registry-name>.azurecr.io/mcp-azure-devops:v1 `
-  --cpu 1 --memory 1 --ports 80 `
+  --cpu 1 --memory 1 --ports 8080 `
   --ip-address Public --os-type Linux `
   --dns-name-label <your-dns-label> `
   --registry-login-server <your-registry-name>.azurecr.io `
@@ -223,7 +224,8 @@ az container create `
     AZURE_DEVOPS_ORG=<your-ado-org> `
     AZURE_DEVOPS_PAT=<your-pat-token> `
     AZURE_DEVOPS_URL=https://dev.azure.com/<your-ado-org> `
-    PORT=80 `
+    PORT=8080 `
+    AZURE_DEVOPS_PAT_SCOPE_POLICY=work-items-read-write `
     TRANSPORT_MODE=http `
     MCP_API_KEY=<your-secret-api-key>
 ```
@@ -261,9 +263,10 @@ az container delete -g mcp-server-rg -n mcp-azure-devops --yes
 | `AZURE_DEVOPS_ORG` | Yes | Azure DevOps organization name |
 | `AZURE_DEVOPS_PAT` | Yes | Personal Access Token |
 | `AZURE_DEVOPS_URL` | Yes | Full URL (e.g., `https://dev.azure.com/myorg`) |
-| `PORT` | No | Server port (default: `80`) |
+| `PORT` | No | Server port (default: `8080`) |
 | `TRANSPORT_MODE` | No | `http` or `stdio` (default: `http`) |
 | `MCP_API_KEY` | No | API key for authentication (disabled if empty) |
+| `AZURE_DEVOPS_PAT_SCOPE_POLICY` | Non-dev | Must be `work-items-read-write` outside development |
 | `SOURCE_ADO_ORG_URL` | No | Source org URL for process migration (enables migration when set) |
 | `SOURCE_ADO_PROJECT` | No | Source project name for process migration |
 | `SOURCE_ADO_PROCESS_NAME` | No | Process template name to migrate (e.g. "Enrichment") |

@@ -87,7 +87,8 @@ Write-Host "Creating container group..." -ForegroundColor Yellow
 $envVars = @(
   "AZURE_DEVOPS_ORG=$adoOrg",
   "AZURE_DEVOPS_URL=$adoUrl",
-  "PORT=80",
+  "PORT=8080",
+  "AZURE_DEVOPS_PAT_SCOPE_POLICY=work-items-read-write",
   "TRANSPORT_MODE=http"
 )
 
@@ -106,7 +107,7 @@ az container create `
   --image "$registryLoginServer/mcp-azure-devops:$ImageTag" `
   --cpu 1 `
   --memory 1 `
-  --ports 80 `
+  --ports 8080 `
   --ip-address Public `
   --os-type Linux `
   --dns-name-label $DnsNameLabel `

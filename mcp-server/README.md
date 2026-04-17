@@ -135,9 +135,10 @@ Additional backlog behaviors:
 | `AZURE_DEVOPS_ORG` | Yes | Azure DevOps organization name |
 | `AZURE_DEVOPS_PAT` | Yes | Personal Access Token (Work Items Read & Write) |
 | `AZURE_DEVOPS_URL` | Yes | e.g. `https://dev.azure.com/myorg` |
-| `PORT` | No | Server port (default: `80`) |
+| `PORT` | No | Server port (default: `8080`) |
 | `TRANSPORT_MODE` | No | `http` or `stdio` (default: `http`) |
 | `MCP_API_KEY` | No | API key for authentication |
+| `AZURE_DEVOPS_PAT_SCOPE_POLICY` | Non-dev | Must be `work-items-read-write` outside development |
 
 ## Security
 
@@ -145,6 +146,8 @@ Additional backlog behaviors:
 - Restrict PAT scopes to minimum required permissions
 - Rotate PATs regularly
 - Enable API key authentication for production
+- API keys are accepted via headers only (`Authorization: Bearer`, `x-api-key`, or `apikey`); query-string `api_key` is intentionally rejected.
+- Outside development, deploy behind HTTPS termination and forward `x-forwarded-proto: https`.
 
 ## References
 

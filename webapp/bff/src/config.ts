@@ -32,6 +32,10 @@ function parseMode(raw: string | undefined): "enforced" | "off" {
   return raw?.toLowerCase() === "off" ? "off" : "enforced";
 }
 
+function isNonDevEnvironment(): boolean {
+  return (process.env.NODE_ENV ?? "development").toLowerCase() !== "development";
+}
+
 function parseList(raw: string | undefined): string[] {
   if (!raw) return [];
   return raw.split(",").map((item) => item.trim()).filter(Boolean);
@@ -48,6 +52,15 @@ function required(name: string): string {
 export function loadConfig(): AppConfig {
   loadEnvFile();
   const authMode = parseMode(process.env.AUTH_MODE);
+  const allowedGroupIds = parseList(process.env.ENTRA_ALLOWED_GROUP_IDS);
+
+  if (authMode === "off" && isNonDevEnvironment()) {
+    throw new Error("AUTH_MODE=off is only allowed in development environments");
+  }
+
+  if (authMode === "enforced" && isNonDevEnvironment() && allowedGroupIds.length === 0) {
+    throw new Error("ENTRA_ALLOWED_GROUP_IDS is required outside development when AUTH_MODE is enforced");
+  }
 
   return {
     port: Number.parseInt(process.env.PORT ?? "8080", 10),
@@ -55,7 +68,7 @@ export function loadConfig(): AppConfig {
     authMode,
     entraTenantId: authMode === "enforced" ? required("ENTRA_TENANT_ID") : (process.env.ENTRA_TENANT_ID ?? ""),
     entraAudience: authMode === "enforced" ? required("ENTRA_API_AUDIENCE") : (process.env.ENTRA_API_AUDIENCE ?? ""),
-    allowedGroupIds: parseList(process.env.ENTRA_ALLOWED_GROUP_IDS),
+    allowedGroupIds,
     mcpBaseUrl: required("MCP_BASE_URL"),
     mcpApiKey: required("MCP_API_KEY"),
   };

@@ -13,10 +13,11 @@ import { AzureDevOpsClient } from "./azureDevOpsClient.js";
 import { workItemTools, handleWorkItemTool, getFileStore } from "./tools/workItems.js";
 import { ensureEnrichmentProcess } from "./processMigration.js";
 
-const PORT = Number.parseInt(process.env.PORT || "80", 10);
+const PORT = Number.parseInt(process.env.PORT || "8080", 10);
 const TRANSPORT_MODE = process.env.TRANSPORT_MODE || "http"; // "http" or "stdio"
 const API_KEY = process.env.MCP_API_KEY || "";
 const CORS_ALLOWED_ORIGIN = process.env.CORS_ALLOWED_ORIGIN || "";
+const IS_NON_DEV = (process.env.NODE_ENV ?? "development").toLowerCase() !== "development";
 
 // Initialize config and Azure DevOps client
 const config = loadConfig();
@@ -61,7 +62,6 @@ function apiKeyAuth(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers["authorization"];
   const xApiKey = req.headers["x-api-key"] as string | undefined;
   const apiKeyHeader = req.headers["apikey"] as string | undefined;
-  const queryKey = req.query["api_key"] as string | undefined;
 
   if (authHeader) {
     const token = authHeader.replace(/^Bearer\s+/i, "");
@@ -69,7 +69,6 @@ function apiKeyAuth(req: Request, res: Response, next: NextFunction): void {
   }
   if (xApiKey === API_KEY) { next(); return; }
   if (apiKeyHeader === API_KEY) { next(); return; }
-  if (queryKey === API_KEY) { next(); return; }
 
   logger.warn("Unauthorized request", { ip: req.ip });
   res.status(401).json({ error: "Unauthorized - invalid or missing API key" });
@@ -222,6 +221,23 @@ async function startHttpServer() {
 
   app.use(helmet());
 
+  if (IS_NON_DEV) {
+    app.set("trust proxy", 1);
+    app.use((req, res, next) => {
+      if (req.path === "/health" || req.path === "/") {
+        next();
+        return;
+      }
+      const forwardedProto = req.headers["x-forwarded-proto"];
+      const proto = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto;
+      if (req.secure || proto === "https") {
+        next();
+        return;
+      }
+      res.status(426).json({ error: "HTTPS is required outside development environments" });
+    });
+  }
+
   // Store active transports by session ID
   const transports: Record<string, StreamableHTTPServerTransport> = {};
 
@@ -354,6 +370,14 @@ async function startHttpServer() {
     message: { error: "Too many upload requests. Please try again later." },
   });
 
+  const mcpRateLimit = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 120,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "Too many MCP requests. Please try again later." },
+  });
+
   // File upload endpoint (REST, not MCP) - accepts JSON body with fileName and fileContent
   app.post("/upload", apiKeyAuth, uploadRateLimit, express.json({ limit: "50mb" }), async (req: Request, res: Response) => {
     try {
@@ -474,13 +498,13 @@ async function startHttpServer() {
   });
 
   // Mount MCP routes on both /mcp and /sse (Copilot Studio uses /sse)
-  app.post("/mcp", apiKeyAuth, express.json({ limit: "50mb" }), handleMcpPost);
-  app.get("/mcp", apiKeyAuth, handleMcpGet);
-  app.delete("/mcp", apiKeyAuth, handleMcpDelete);
+  app.post("/mcp", apiKeyAuth, mcpRateLimit, express.json({ limit: "50mb" }), handleMcpPost);
+  app.get("/mcp", apiKeyAuth, mcpRateLimit, handleMcpGet);
+  app.delete("/mcp", apiKeyAuth, mcpRateLimit, handleMcpDelete);
 
-  app.post("/sse", apiKeyAuth, express.json({ limit: "50mb" }), handleMcpPost);
-  app.get("/sse", apiKeyAuth, handleMcpGet);
-  app.delete("/sse", apiKeyAuth, handleMcpDelete);
+  app.post("/sse", apiKeyAuth, mcpRateLimit, express.json({ limit: "50mb" }), handleMcpPost);
+  app.get("/sse", apiKeyAuth, mcpRateLimit, handleMcpGet);
+  app.delete("/sse", apiKeyAuth, mcpRateLimit, handleMcpDelete);
 
   // Global error handler
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {

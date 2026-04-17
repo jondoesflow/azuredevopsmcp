@@ -169,7 +169,8 @@ ENV_VARS=(
   "AZURE_DEVOPS_ORG=$ADO_ORG"
   "AZURE_DEVOPS_PAT=$ADO_PAT"
   "AZURE_DEVOPS_URL=$ADO_URL"
-  "PORT=80"
+  "PORT=8080"
+  "AZURE_DEVOPS_PAT_SCOPE_POLICY=work-items-read-write"
   "TRANSPORT_MODE=http"
 )
 
@@ -190,7 +191,7 @@ az container create \
   --image "$IMAGE_FULL" \
   --cpu 1 \
   --memory 1 \
-  --ports 80 \
+  --ports 8080 \
   --ip-address Public \
   --os-type Linux \
   --registry-login-server "$REGISTRY_URL" \

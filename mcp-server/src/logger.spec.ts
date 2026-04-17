@@ -40,4 +40,27 @@ describe("logger", () => {
 
     expect(spy).toHaveBeenCalledWith(expect.stringContaining("[ERROR] failed: boom"), expect.any(String));
   });
+
+  test("redacts PAT and API key values from structured logs", () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    logger.info("auth attempt", {
+      pat: "real-pat-value",
+      apiKey: "real-api-key",
+      nested: {
+        authorization: "Bearer abc123",
+      },
+    });
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.stringContaining("[INFO] auth attempt"),
+      expect.objectContaining({
+        pat: "[REDACTED]",
+        apiKey: "[REDACTED]",
+        nested: expect.objectContaining({
+          authorization: "[REDACTED]",
+        }),
+      })
+    );
+  });
 });
