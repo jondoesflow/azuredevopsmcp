@@ -41,6 +41,8 @@ You need the following before starting:
 4. Set scope to **Work Items → Read & Write**
 5. Copy the token immediately — you won't see it again
 
+Do not use full-access or broader-than-needed PAT scopes for this service.
+
 ### Generate an MCP API Key
 
 Create a random string to secure your MCP server. You can use PowerShell:
@@ -50,6 +52,16 @@ Create a random string to secure your MCP server. You can use PowerShell:
 ```
 
 Save this value — you'll use it in deployment and Copilot Studio configuration.
+
+### Production security policy flags
+
+For non-development deployments, set:
+
+```text
+AZURE_DEVOPS_PAT_SCOPE_POLICY=work-items-read-write
+```
+
+The server will fail startup outside development if this value is missing or different.
 
 ---
 
@@ -101,6 +113,7 @@ AZURE_DEVOPS_URL=https://dev.azure.com/<your-org>
 PORT=3000
 TRANSPORT_MODE=http
 MCP_API_KEY=<your-api-key>
+AZURE_DEVOPS_PAT_SCOPE_POLICY=work-items-read-write
 ```
 
 ### Build and Run
@@ -194,7 +207,7 @@ az container create `
   --resource-group mcp-server-rg `
   --name mcp-azure-devops `
   --image <your-registry-name>.azurecr.io/mcp-azure-devops:v1 `
-  --cpu 1 --memory 1 --ports 80 `
+  --cpu 1 --memory 1 --ports 8080 `
   --ip-address Public --os-type Linux `
   --dns-name-label <your-dns-label> `
   --registry-login-server <your-registry-name>.azurecr.io `
@@ -204,7 +217,8 @@ az container create `
     AZURE_DEVOPS_ORG=<your-org> `
     AZURE_DEVOPS_PAT=<your-pat> `
     AZURE_DEVOPS_URL=https://dev.azure.com/<your-org> `
-    PORT=80 `
+    PORT=8080 `
+    AZURE_DEVOPS_PAT_SCOPE_POLICY=work-items-read-write `
     TRANSPORT_MODE=http `
     MCP_API_KEY=<your-api-key>
 ```

@@ -41,6 +41,10 @@ function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean 
   return fallback;
 }
 
+function isNonDevEnvironment(): boolean {
+  return (process.env.NODE_ENV ?? "development").toLowerCase() !== "development";
+}
+
 function loadEnvFile(): void {
   const envPath = path.join(__dirname, "..", ".env");
   if (fs.existsSync(envPath)) {
@@ -58,6 +62,12 @@ function loadEnvFile(): void {
 
 export function loadConfig(): Config {
   loadEnvFile();
+
+  const patScopePolicy = (process.env.AZURE_DEVOPS_PAT_SCOPE_POLICY ?? "").trim().toLowerCase();
+  if (isNonDevEnvironment() && patScopePolicy !== "work-items-read-write") {
+    console.error("Error: AZURE_DEVOPS_PAT_SCOPE_POLICY must be set to 'work-items-read-write' outside development.");
+    process.exit(1);
+  }
 
   const enrichmentEnabled = parseBooleanEnv(process.env.ENRICHMENT_ENABLED, false);
 

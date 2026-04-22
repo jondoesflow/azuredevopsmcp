@@ -171,7 +171,8 @@ $setEnvArgs = @(
   "AZURE_DEVOPS_URL=$adoUrl",
   "AZURE_DEVOPS_PAT=secretref:ado-pat",
   "MCP_API_KEY=secretref:mcp-api-key",
-  "PORT=80",
+  "PORT=8080",
+  "AZURE_DEVOPS_PAT_SCOPE_POLICY=work-items-read-write",
   "TRANSPORT_MODE=http"
 )
 

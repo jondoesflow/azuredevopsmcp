@@ -136,6 +136,37 @@ describe("AzureDevOpsClient", () => {
     );
   });
 
+  test("createWorkItem sanitizes HTML content for description and acceptance criteria", async () => {
+    const witApi = buildWitApi();
+    witApi.createWorkItem.mockResolvedValue({ id: 1002 });
+    mockGetWorkItemTrackingApi.mockResolvedValue(witApi);
+
+    const client = new AzureDevOpsClient(config);
+    await client.createWorkItem({
+      project: "Proj",
+      witType: "User Story",
+      title: "Story",
+      description: "<script>alert('x')</script>",
+      acceptanceCriteria: ["Given <b>unsafe</b> input"],
+    });
+
+    const [, patchDocument] = witApi.createWorkItem.mock.calls[0];
+    expect(patchDocument).toEqual(
+      expect.arrayContaining([
+        {
+          op: Operation.Add,
+          path: "/fields/System.Description",
+          value: "&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;",
+        },
+        {
+          op: Operation.Add,
+          path: "/fields/Microsoft.VSTS.Common.AcceptanceCriteria",
+          value: "Given &lt;b&gt;unsafe&lt;/b&gt; input<br/>",
+        },
+      ])
+    );
+  });
+
   test("createWorkItem retries without iteration path when tree is invalid", async () => {
     const witApi = buildWitApi();
     const iterationError = new Error("TF401347: Invalid tree name for field System.IterationPath");
@@ -297,6 +328,36 @@ describe("AzureDevOpsClient", () => {
 
     const [, fallbackPatch] = witApi.updateWorkItem.mock.calls[1];
     expect((fallbackPatch as Array<{ path: string }>).some((op) => op.path === "/fields/System.IterationPath")).toBe(false);
+  });
+
+  test("updateWorkItem sanitizes HTML content for description and acceptance criteria", async () => {
+    const witApi = buildWitApi();
+    witApi.updateWorkItem.mockResolvedValue({ id: 12 });
+    mockGetWorkItemTrackingApi.mockResolvedValue(witApi);
+
+    const client = new AzureDevOpsClient(config);
+    await client.updateWorkItem({
+      project: "Proj",
+      workItemId: 12,
+      description: "<img src=x onerror=alert(1)>",
+      acceptanceCriteria: ["When <i>test</i> runs"],
+    });
+
+    const [, patchDocument] = witApi.updateWorkItem.mock.calls[0];
+    expect(patchDocument).toEqual(
+      expect.arrayContaining([
+        {
+          op: Operation.Replace,
+          path: "/fields/System.Description",
+          value: "&lt;img src=x onerror=alert(1)&gt;",
+        },
+        {
+          op: Operation.Replace,
+          path: "/fields/Microsoft.VSTS.Common.AcceptanceCriteria",
+          value: "When &lt;i&gt;test&lt;/i&gt; runs<br/>",
+        },
+      ])
+    );
   });
 
   test("addAcceptanceCriteria sends markdown list to updateWorkItem", async () => {

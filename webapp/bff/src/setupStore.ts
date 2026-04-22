@@ -4,9 +4,17 @@ import { fileURLToPath } from "node:url";
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { ProcessType, SetupConnectionInput, SetupConnectionState } from "./types.js";
 
+const DEV_FALLBACK_KEY = "dev-only-insecure-key-set-SETUP_ENCRYPTION_KEY";
+
 // Derive a 32-byte key from SETUP_ENCRYPTION_KEY env var (or a fallback for dev).
 // In production, set SETUP_ENCRYPTION_KEY to a long random string.
-const RAW_KEY = process.env.SETUP_ENCRYPTION_KEY ?? "dev-only-insecure-key-set-SETUP_ENCRYPTION_KEY";
+const RAW_KEY = process.env.SETUP_ENCRYPTION_KEY ?? DEV_FALLBACK_KEY;
+const IS_NON_DEV = (process.env.NODE_ENV ?? "development").toLowerCase() !== "development";
+
+if (IS_NON_DEV && (!process.env.SETUP_ENCRYPTION_KEY || RAW_KEY === DEV_FALLBACK_KEY)) {
+  throw new Error("SETUP_ENCRYPTION_KEY must be set to a strong non-default value outside development");
+}
+
 const ENCRYPTION_KEY = scryptSync(RAW_KEY, "mcp-setup-store", 32);
 const ALGORITHM = "aes-256-gcm";
 
@@ -130,6 +138,7 @@ function writePerUser(data: Record<string, StoredUserConfig>): void {
     encrypted[userId] = encryptStoredUserConfig(config);
   }
   fs.writeFileSync(perUserPath, `${JSON.stringify(encrypted, null, 2)}\n`, "utf-8");
+  fs.chmodSync(perUserPath, 0o600);
 }
 
 function writeEnv(updates: Map<string, string>): void {
@@ -156,6 +165,7 @@ function writeEnv(updates: Map<string, string>): void {
   }
 
   fs.writeFileSync(envPath, `${updatedLines.join("\n")}\n`, "utf-8");
+  fs.chmodSync(envPath, 0o600);
 }
 
 export class SetupStore {

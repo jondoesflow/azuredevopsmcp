@@ -39,7 +39,12 @@ Express + TypeScript API that secures and proxies requests from the SPA to the M
 - `AUTH_MODE=enforced`: validates Entra bearer tokens via JWKS.
 - `AUTH_MODE=off`: disables auth for local development only.
 
-Optional group restriction is supported with `ENTRA_ALLOWED_GROUP_IDS`.
+Outside development:
+- `AUTH_MODE=off` is rejected at startup.
+- `ENTRA_ALLOWED_GROUP_IDS` is required when `AUTH_MODE=enforced`.
+- `SETUP_ENCRYPTION_KEY` must be set and cannot use the development fallback value.
+
+Optional group restriction is still supported in development with `ENTRA_ALLOWED_GROUP_IDS`.
 
 ## Rate limiting
 

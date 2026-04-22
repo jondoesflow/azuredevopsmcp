@@ -12,6 +12,7 @@
 ## 2) Identity, Secrets, and Security Inputs
 - **Azure DevOps PAT** with minimum scope:
   - Work Items: **Read & Write**
+  - No broad/full-access PATs allowed for MCP runtime use.
 - **MCP API key** (random high-entropy secret) used by:
   - Copilot Studio MCP connector (header auth)
   - Power Automate upload call (`/upload`)
@@ -33,7 +34,7 @@
   - Azure DevOps REST API
 - Allowed inbound connectivity from:
   - Copilot Studio and Power Automate to MCP endpoint
-- TLS strategy agreed (managed cert / ingress) if production security policy requires HTTPS-only traffic.
+- TLS strategy is mandatory for non-development deployments (managed cert / ingress with HTTPS termination).
 
 ## 5) Mandatory Application Configuration
 Provide/approve values for:
@@ -43,6 +44,7 @@ Provide/approve values for:
 - `MCP_API_KEY`
 - `PORT`
 - `TRANSPORT_MODE`
+- `AZURE_DEVOPS_PAT_SCOPE_POLICY=work-items-read-write` (required outside development)
 
 If the target Azure DevOps project does not have the Enrichment process template with custom fields,
 the web app wizard will prompt for source org credentials to migrate the process automatically.
