@@ -1358,7 +1358,6 @@ export function App() {
     return (
       <div className="signin-shell">
         <section className="signin-card">
-          <img src="/capgemini-logo-blue.svg" alt="Capgemini" style={{ width: 200, margin: "0 auto" }} />
           <h1>Backlog Assistant</h1>
           <p>Sign in to continue.</p>
           <div className="inline-action-row">
@@ -1377,7 +1376,7 @@ export function App() {
       <header className="hero">
         {/* Top bar: logo left, user identity right */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", marginBottom: 8 }}>
-          <img src="/capgemini-logo-white.svg" alt="Capgemini" style={{ height: 48 }} />
+          <span style={{ fontSize: 20, fontWeight: 600 }}>Backlog Assistant</span>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span style={{ fontSize: 13, opacity: 0.85 }}>{account?.username}</span>
             <button onClick={signOut} className="header-btn header-btn-subtle">Sign out</button>
